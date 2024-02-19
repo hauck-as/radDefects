@@ -1,0 +1,166 @@
+#!/bin/bash
+
+shopt -s extglob
+########################################
+# help
+########################################
+Help()
+{
+   # Display Help
+   echo "Bash script to analyze radiation-induced defects from first principles."
+   echo
+   echo "Syntax: find_tde [-h]"
+   echo "options:"
+   echo "h     Print this Help."
+   echo
+}
+
+usage() { echo "Usage: $0 [-h]" 1>&2; exit 1; }
+
+# get the options
+while getopts ":h:" o; do
+  case "${o}" in
+    h) # display Help
+      Help
+      exit;;
+    \?) # Invalid option
+      echo "Error: Invalid option"
+      usage
+      exit;;
+  esac
+done
+shift $((OPTIND-1))
+
+########################################
+# set variables for directories
+########################################
+base_path="${PWD}"
+
+# pydefect directories
+unitcell_path="${base_path}/unitcell/"
+uc_opt_path="${unitcell_path}structure_opt/"
+uc_band_path="${unitcell_path}band/"
+uc_dos_path="${unitcell_path}dos/"
+uc_dielec_path="${unitcell_path}dielectric/"
+
+cpd_path="${base_path}/cpd/"
+
+defect_path="${base_path}/defect/"
+perfect_path="${defect_path}perfect/"
+
+########################################
+# VISE VASP input set generation
+########################################
+# GaN MPRelaxSet POSCAR
+cd "${uc_opt_path}"
+vise gp -m mp-804
+
+# generate INCAR/KPOINTS/POTCAR
+vise vs
+
+# perform relaxation
+
+########################################
+# VISE calc band structure/DOS/dielectric tensor
+########################################
+cd "${uc_band_path}"
+vise vs -t band -pd "${uc_opt_path}"
+
+cd "${uc_dos_path}"
+vise vs -t dos -pd "${uc_opt_path}" -uis LVTOT True LAECHG True KPAR 1
+
+cd "${uc_dielec_path}"
+vise vs -t dielectric_dfpt -pd "${uc_opt_path}"
+
+# perform calculations
+
+########################################
+Gather unit cell info for defect calcs
+########################################
+cd "${unitcell_path}"
+pydefect_vasp u -vb "${uc_band_path}vasprun.xml" -ob "${uc_band_path}OUTCAR" -odc "${uc_dielec_path}OUTCAR" -odi "${uc_dielec_path}OUTCAR" -n GaN
+
+########################################
+Search for competing phases
+########################################
+cd "${cpd_path}"
+pydefect_vasp mp -e Ga N --e_above_hull 0.0005
+
+# Setup POTCAR/INCAR/KPOINTS files for competing phases, using ENCUT = max ENMAX*1.3 from consituent POTCARS
+for i in *_*/; do cd $i; vise vs -uis ENCUT 520.0; cd ../; done
+
+# can create a symbolic link instead of calculating the already calculated phase, unless ENCUT is changed
+ln -s "${uc_opt_path}" GaN_unitcell
+
+# perform calculations
+
+# gather and analyze competing phase info
+pydefect_vasp mce -d *_*/
+pydefect sre
+pydefect cv -t GaN
+pydefect pc
+
+########################################
+Create supercell for defect calcs
+########################################
+# can specify supercell size with --matrix 2 1 1
+cd "${defect_path}"
+pydefect s -p "${uc_opt_path}CONTCAR"
+
+# show supercell info
+pydefect_print supercell_info.json
+
+# create defect list for vacancies and antisites
+# add dopants with -d element_symbol (e.g., pydefect ds -d Ca)
+# add in functionality for this with an option perhaps
+# pydefect ds
+
+# generate volumetric data for interstitials
+cd "${uc_dos_path}"
+pydefect_vasp le -v AECCAR{0,2} -i all_electron_charge
+pydefect_print volumetric_data_local_extrema.json
+
+# add interstitials to defect list
+cd "${defect_path}"
+pydefect_util ai --local_extrema "${uc_dos_path}volumetric_data_local_extrema.json" -i 1 2
+pydefect pi -i 1 -s supercell_info.json    # use to remove interstitial
+pydefect ds    # recreate defect list
+
+########################################
+Setup defect calcs
+########################################
+pydefect_vasp de
+pydefect_print defect_entry.json    # use in any defect directory
+
+# subcommand may be used for manual defect creation to generate defect_entry.json file
+pydefect_vasp_util de -d . -p "${perfect_path}POSCAR" -n Ga_FP
+
+# create POTCAR/INCAR/KPOINTS file
+for i in */; do cd $i; vise vs -t defect -uis NSW 100 NCORE 24; cd ../; done
+
+# parse results
+pydefect_vasp cr -d *_*/ "${perfect_path}"
+
+# perform finite-size corrections
+pydefect efnv -d *_*/ -pcr "${perfect_path}calc_results.json" -u "${unitcell_path}unitcell.yaml"
+
+########################################
+Analyze defect calc structure
+########################################
+pydefect dsi -d *_*/
+
+# VESTA file
+pydefect_util dvf -d *_*
+
+# eigenvalue analysis via perfect band edge states & band edge orbital infos
+pydefect_vasp pbes -d "${perfect_path}"
+pydefect_vasp beoi -d *_* -pbes "${perfect_path}perfect_band_edge_state.json"
+
+# edge characters (shallow/deep)
+pydefect bes -d *_*/ -pbes "${perfect_path}perfect_band_edge_state.json"
+
+# defect formation energy diagram
+pydefect dei -d *_*/ -pcr "${perfect_path}calc_results.json" -u "${unitcell_path}unitcell.yaml" -s "${cpd_path}standard_energies.yaml"
+pydefect des -d *_*/ -u "${unitcell_path}unitcell.yaml" -pbes "${perfect_path}perfect_band_edge_state.json" -t "${cpd_path}target_vertices.yaml"
+pydefect cs -d *_*/ -pcr "${perfect_path}calc_results.json"
+pydefect pe -d defect_energy_summary.json -l A
