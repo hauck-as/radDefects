@@ -1,0 +1,39 @@
+[project]
+name = "radDefects"
+version = "0.0.1"
+authors = [
+  { name="Alexander Hauck", email="ash5615@psu.edu" },
+]
+description = "Framework to analyze properties of radiation-induced defects in semiconductor materials from first principles."
+readme = "README.md"
+license = {file = "LICENSE"}
+requires-python = ">=3.6"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "requests",
+    'importlib-metadata; python_version<"3.12"',
+    "numpy",
+    "pymatgen",
+    "mp-api",
+    "vise",
+    "pydefect",
+    "sumo"
+]
+
+[project.urls]
+#Homepage = "https://radDefects.readthedocs.io/en/latest/"
+Repository = "https://github.com/hauck-as/radDefects"
+
+[project.scripts]
+cli-name = "radDefects.cli.main:main"
+
+[tool.setuptools.packages]
+find = {}  # Scan the project directory with the default parameters
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
