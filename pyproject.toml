@@ -21,7 +21,8 @@ dependencies = [
     "mp-api",
     "vise",
     "pydefect",
-    "sumo"
+    "sumo",
+    "pymatgen-analysis-defects"
 ]
 
 [project.urls]
