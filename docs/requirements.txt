@@ -1,0 +1,11 @@
+# required dependencies:
+matplotlib
+plotly
+numpy
+pymatgen
+pymatgen-analysis-defects
+mp-api
+vise
+pydefect
+sumo
+sphinx_book_theme

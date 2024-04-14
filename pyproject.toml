@@ -1,6 +1,6 @@
 [project]
 name = "radDefects"
-version = "0.0.1"
+version = "0.1.3"
 authors = [
   { name="Alexander Hauck", email="ash5615@psu.edu" },
 ]
@@ -26,7 +26,7 @@ dependencies = [
 ]
 
 [project.urls]
-#Homepage = "https://radDefects.readthedocs.io/en/latest/"
+Homepage = "https://radDefects.readthedocs.io/en/latest/"
 Repository = "https://github.com/hauck-as/radDefects"
 
 [project.scripts]
