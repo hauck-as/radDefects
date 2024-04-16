@@ -1,16 +1,46 @@
 """Core functions and classes for analyzing rad-induced defects from VASP."""
+import logging
+from typing import TYPE_CHECKING, Optional
+import importlib.resources as ilr
+
 import os
+import glob
+from pathlib import Path
+import shutil
+import json
+from monty.serialization import dumpfn, loadfn
+from monty.json import MSONable, MontyEncoder, MontyDecoder
+
 import subprocess
+import re
+import pprint
+
+import math as m
+from fractions import Fraction
+import random as rand
+
 import numpy as np
+import pandas as pd
+import matplotlib as mpl
+import matplotlib.pyplot as plt
 
 from pymatgen.io.vasp.sets import VaspInputSet, Poscar
+from pymatgen.io.vasp.outputs import Locpot, Outcar, Vasprun
 from pymatgen.core import Structure, Lattice
+from pymatgen.io.vasp.sets import MPRelaxSet
 from pymatgen.symmetry.analyzer import *
 from pymatgen.analysis.defects.core import DefectComplex, Substitution, Vacancy
 from pymatgen.analysis.defects.finder import DefectSiteFinder
 from mp_api.client import MPRester
 
+from pydefect.analyzer.unitcell import Unitcell
 from pydefect.analyzer.band_edge_states import BandEdgeOrbitalInfos, BandEdgeState, PerfectBandEdgeState
+from pydefect.analyzer.calc_results import CalcResults
+from pydefect.analyzer.defect_energy import DefectEnergyInfo
+from pydefect.input_maker.defect_entry import DefectEntry
+from pydefect.corrections.efnv_correction import ExtendedFnvCorrection
+
+from doped.analysis import DefectParser, DefectsParser
 
 # pydefect file structure
 base_path = os.getcwd()
@@ -179,7 +209,7 @@ def plot_plnr_avg_only(plot_data, title=None, ax=None, style_file=None):
     x = plot_data["x"]
     dft_diff = plot_data["dft_diff"]
 
-    style_file = style_file or f"{pkg_resources.get_distribution('doped').location}/doped/utils/doped.mplstyle"
+    style_file = style_file or f"{ilr.files('doped')}/utils/doped.mplstyle"
     plt.style.use(style_file)  # enforce style, as style.context currently doesn't work with jupyter
     with plt.style.context(style_file):
         if ax is None:
