@@ -9,7 +9,7 @@ Help()
    # Display Help
    echo "Bash script to analyze radiation-induced defects from first principles."
    echo
-   echo "Syntax: find_tde [-h]"
+   echo "Syntax: rad_defects [-h]"
    echo "options:"
    echo "h     Print this Help."
    echo
