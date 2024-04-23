@@ -22,7 +22,8 @@ dependencies = [
     "vise",
     "pydefect",
     "sumo",
-    "pymatgen-analysis-defects"
+    "pymatgen-analysis-defects",
+    "niet"
 ]
 
 [project.urls]

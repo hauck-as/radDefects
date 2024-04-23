@@ -8,4 +8,5 @@ mp-api
 vise
 pydefect
 sumo
+niet
 sphinx_book_theme
