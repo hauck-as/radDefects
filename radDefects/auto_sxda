@@ -57,38 +57,23 @@ eV2Ry () {
 }
 
 ########################################
-# file parsing functions
-########################################
-# modified from https://stackoverflow.com/a/21189044
-function parse_uc_yaml {
-   local prefix=$2
-   local s='[[:space:]]*' w='[a-zA-Z0-9_]*' fs=$(echo @|tr @ '\034')
-   sed -ne "s|^\($s\):|\1|" \
-        -e "s|^\($s\)\($w\)$s:$s[\"']\(.*\)[\"']$s\$|\1$fs\2$fs\3|p" \
-        -e "s|^\($s\)\($w\)$s:$s\(.*\)$s\$|\1$fs\2$fs\3|p"  $1 |
-   awk -F$fs '{
-      indent = length($1)/2;
-      vname[indent] = $2;
-      for (i in vname) {if (i > indent) {delete vname[i]}}
-      if (length($3) > 0) {
-         vn=""; for (i=0; i<indent; i++) {vn=(vn)(vname[i])("_")}
-         printf("%s%s%s=\"%s\"\n", "'$prefix'",vn, $2, $3);
-      }
-   }'
-}
-
-########################################
 # sxdefectalign vasp examples
 ########################################
 # sxdefectalign --ecut 30 --charge -2 --eps 8.9 --center 0.5,0.5,0.5 --relative --vdef vacancy/LOCPOT --vref bulk/LOCPOT --vasp
 # xmgrace-nxy vline-eV-a0.dat
 # sxdefectalign --ecut 30 --charge -2 --eps 8.9 --center 0.5,0.5,0.5 --relative --vdef vacancy/LOCPOT --vref bulk/LOCPOT --vasp -C -0.12
 
-# dielectric tensor notation
-# eps_xx,eps_xy,eps_xz,eps_xy,eps_yy,eps_yz,eps_xz,eps_yz,eps_zz
+
 
 ########################################
 # perform sxdefectalign analysis
 ########################################
-# eval $(parse_uc_yaml "${unitcell_path}unitcell.yaml")
-parse_uc_yaml "${unitcell_path}unitcell.yaml"
+# dielectric tensor notation: eps_xx,eps_xy,eps_xz,eps_xy,eps_yy,eps_yz,eps_xz,eps_yz,eps_zz
+# gather dielectric tensor from unitcell.yaml
+declare -a eps_ele=($(niet ".ele_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?'))
+declare -a eps_ion=($(niet ".ion_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?'))
+declare -a eps_tensor=()
+
+for i in "${!eps_ele[@]}"; do
+    eps_tensor+=($(bc -l <<< "${eps_ele[i]}+${eps_ion[i]}"))
+done
