@@ -49,12 +49,16 @@ defect_path="${base_path}/defect/"
 perfect_path="${defect_path}perfect/"
 
 ########################################
-# unit conversion
+# unit conversion and utility funcs
 ########################################
 # convert eV to Rydberg
 eV2Ry () {
   echo "scale=16; ${1}*0.0734985857" | bc -l
 }
+
+# join array by delimiter
+# https://stackoverflow.com/a/17841619/24613079
+function join_by { local IFS="$1"; shift; echo "$*"; }
 
 ########################################
 # sxdefectalign vasp examples
@@ -63,17 +67,63 @@ eV2Ry () {
 # xmgrace-nxy vline-eV-a0.dat
 # sxdefectalign --ecut 30 --charge -2 --eps 8.9 --center 0.5,0.5,0.5 --relative --vdef vacancy/LOCPOT --vref bulk/LOCPOT --vasp -C -0.12
 
-
-
 ########################################
 # perform sxdefectalign analysis
 ########################################
 # dielectric tensor notation: eps_xx,eps_xy,eps_xz,eps_xy,eps_yy,eps_yz,eps_xz,eps_yz,eps_zz
 # gather dielectric tensor from unitcell.yaml
-declare -a eps_ele=($(niet ".ele_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?'))
-declare -a eps_ion=($(niet ".ion_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?'))
+declare -a eps_ele=($(niet ".ele_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?')) || exit
+declare -a eps_ion=($(niet ".ion_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?')) || exit
 declare -a eps_tensor=()
 
 for i in "${!eps_ele[@]}"; do
-    eps_tensor+=($(bc -l <<< "${eps_ele[i]}+${eps_ion[i]}"))
+  eps_tensor+=($(bc -l <<< "${eps_ele[i]}+${eps_ion[i]}"))
+done
+
+eps_tensor_str=$(join_by , ${eps_tensor[@]})
+echo "Dielectric tensor: ${eps_tensor_str}"
+
+for def_dir in ${defect_path}*/; do
+  # defect_site_charge format
+  defect=$(basename ${def_dir})
+  defect_type=$(echo "${defect}" | rev | cut -d"_" -f2-  | rev)
+  defect_chg=$(echo "${defect}" | rev | cut -d"_" -f1  | rev)
+  
+  echo "${defect_type} ${defect_chg}"
+  
+  # get and convert ENCUT from INCAR file
+  encut_ev=$(grep ENCUT "${def_dir}INCAR" | grep -Eo '[0-9]+([.][0-9]+)?')
+  encut_ry=$(eV2Ry ${encut_ev})
+  
+  echo "ENCUT = ${encut_ry} Ry"
+  
+  # defect center notation: x,y,z
+  # gather defect center position from defect_entry.json
+  declare -a defect_center=($(niet ".defect_center" "${def_dir}defect_entry.json" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?')) || exit
+  defect_center_str=$(join_by , ${defect_center[@]})
+  
+  echo "Defect position = (${defect_center_str})"
+  
+  # perform analysis using sxdefectalign
+  cd ${def_dir}
+  sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
+  
+  ########################################
+  # perform plotting using gnuplot
+  ########################################
+  # gnuplot
+  # set term png
+  
+  # vline-eV-a{0,1,2}.dat format
+  # z V(long-range) ... & z V(defect)-V(ref) V(defect)-V(ref)-V(long-range) ...
+  # set output "vline-eV-a0.png"
+  # plot "vline-eV-a0.dat" u 1:2 t 'V(long-range)' w lines, \
+  # "vline-eV-a0.dat" u 1:3 t 'V(defect)-V(ref)' w lines, \
+  # "vline-eV-a0.dat" u 1:4 t 'V(defect)-V(ref)-V(long-range)' w lines
+  
+  # vAtoms.dat format
+  # r V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range) x y z ...
+  
+  cd ../../
+  exit
 done
