@@ -21,7 +21,7 @@ plot "vline-eV-a1.dat" u 1:2 t 'V(long-range)' w lines, \
 "vline-eV-a1.dat" u 1:3 t 'V(defect)-V(ref)' w lines, \
 "vline-eV-a1.dat" u 1:4 t 'V(defect)-V(ref)-V(long-range)' w lines
 set xlabel "c (Bohr)"
-set key outside center rmargin
+set key rmargin
 plot "vline-eV-a2.dat" u 1:2 t 'V(long-range)' w lines, \
 "vline-eV-a2.dat" u 1:3 t 'V(defect)-V(ref)' w lines, \
 "vline-eV-a2.dat" u 1:4 t 'V(defect)-V(ref)-V(long-range)' w lines
