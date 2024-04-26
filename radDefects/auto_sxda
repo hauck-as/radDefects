@@ -1,4 +1,5 @@
 #!/bin/bash
+# tool for interfacing between pydefect and sxdefectalign
 
 shopt -s extglob
 ########################################
@@ -9,13 +10,16 @@ Help()
    # Display Help
    echo "Automated sxdefectalign analysis of rad-induced defects using pydefect directory structure."
    echo
-   echo "Syntax: bash ~/work/bin/radDefects/radDefects/auto_sxda [-h]"
+   echo "Syntax: bash ~/work/bin/radDefects/radDefects/auto_sxda [-p|h]"
    echo "options:"
+   echo "p     Plotting program choice or no plotting: gnuplot or none"
    echo "h     Print this Help."
    echo
 }
 
-usage() { echo "Usage: $0 [-h]" 1>&2; exit 1; }
+usage() { echo "Usage: $0 [-h] [-p <gnuplot|none>]" 1>&2; exit 1; }
+
+plot_prog="gnuplot"
 
 # get the options
 while getopts ":h:" o; do
@@ -23,6 +27,10 @@ while getopts ":h:" o; do
     h) # display Help
       Help
       exit;;
+    p) # Enter plotting program
+      plot_prog=${OPTARG}
+      ((plot_prog == "gnuplot" || plot_prog == "none")) || usage
+      ;;
     \?) # Invalid option
       echo "Error: Invalid option"
       usage
@@ -107,22 +115,26 @@ for def_dir in ${defect_path}*/; do
   
   # perform analysis using sxdefectalign
   cd ${def_dir}
-  sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
+  if [[ ${def_dir} == *"FP"* ]]; then
+    sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
+  else
+    exit
+    sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
+  fi
   
   ########################################
   # perform plotting using gnuplot
   ########################################
-  # gnuplot
-  # set term png
+  if [ "${plot_prog}" = "gnuplot" ]; then
+    # vline-eV-a{0,1,2}.dat matrix format
+    # z V(long-range) ... & z V(defect)-V(ref) V(defect)-V(ref)-V(long-range) ...
+    gnuplot> load "${SCRIPT_DIR}/util/atomic_sph_avg.p"
   
-  # vline-eV-a{0,1,2}.dat format
-  # z V(long-range) ... & z V(defect)-V(ref) V(defect)-V(ref)-V(long-range) ...
-  gnuplot> load "${SCRIPT_DIR}/util/atomic_sph_avg.p"
-  
-  # vAtoms.dat format
-  # r V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range) x y z ...
-  gnuplot> load "${SCRIPT_DIR}/util/atomic_sph_avg.p"
+    # vAtoms.dat format
+    # r V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range) x y z ...
+    # empty lines between different species (need to include in plotting now)
+    gnuplot> load "${SCRIPT_DIR}/util/atomic_sph_avg.p"
+  fi
   
   cd ../../
-  exit
 done
