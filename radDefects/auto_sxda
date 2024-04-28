@@ -93,6 +93,9 @@ eps_tensor_str=$(join_by , ${eps_tensor[@]})
 echo "Dielectric tensor: ${eps_tensor_str}"
 
 for def_dir in ${defect_path}*/; do
+  # species from POSCAR
+  declare -a element_arr=($(sed '6q;d' "${def_dir}POSCAR"))
+  
   # defect_site_charge format
   defect=$(basename ${def_dir})
   defect_type=$(echo "${defect}" | rev | cut -d"_" -f2-  | rev)
@@ -128,14 +131,14 @@ for def_dir in ${defect_path}*/; do
   if [ "${plot_prog}" = "gnuplot" ]; then
     # vline-eV-a{0,1,2}.dat matrix format
     # z V(long-range) ... & z V(defect)-V(ref) V(defect)-V(ref)-V(long-range) ...
-    gnuplot> load "${SCRIPT_DIR}/util/plnr_avgs.p"
+    gnuplot> call "${SCRIPT_DIR}/util/plnr_avgs.p" "${element_arr[0]}" "${element_arr[1]}"
   
     # vAtoms.dat format
     # r V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range) x y z ...
     # empty lines between different species (need to include in plotting now)
     # replace empty lines with double empty lines to enable gnuplot index use
     sed -i -e 's/^$/\n/' vAtoms.dat
-    gnuplot> load "${SCRIPT_DIR}/util/atomic_sph_avg.p"
+    gnuplot> call "${SCRIPT_DIR}/util/atomic_sph_avg.p" Ga N
   fi
   
   cd ../../
