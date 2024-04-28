@@ -15,6 +15,5 @@ set ylabel "potential [eV]"
 set output "vAtoms.png"
 plot "vAtoms.dat" i 0:1 u 1:2 t 'V_{lr}' w points, \
 "vAtoms.dat" i 0 u 1:3 t 'V_{defect} - V_{ref} (' . ARG1 . ')' w points, \
-"vAtoms.dat" i 0 u 1:4 t 'V_{defect} - V_{ref} - V_{lr}' w points, \
-"vAtoms.dat" i 1 u 1:3 t 'V_{defect} - V_{ref} (' . ARG2 . ')' w points, \
-"vAtoms.dat" i 1 u 1:4 t 'V_{defect} - V_{ref} - V_{lr}' w points
+"vAtoms.dat" i 0:1 u 1:4 t 'V_{defect} - V_{ref} - V_{lr}' w points, \
+"vAtoms.dat" i 1 u 1:3 t 'V_{defect} - V_{ref} (' . ARG2 . ')' w points

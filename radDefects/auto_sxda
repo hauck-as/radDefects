@@ -76,6 +76,11 @@ function join_by { local IFS="$1"; shift; echo "$*"; }
 # xmgrace-nxy vline-eV-a0.dat
 # sxdefectalign --ecut 30 --charge -2 --eps 8.9 --center 0.5,0.5,0.5 --relative --vdef vacancy/LOCPOT --vref bulk/LOCPOT --vasp -C -0.12
 
+# potential terms sxdefectalign = pydefect
+# V(long-range) = V_{PC,q}
+# V(defect)-V(ref) = V_{q/b}
+# V(defect)-V(ref)-V(long-range) = dV_{PC,q/b}
+
 ########################################
 # perform sxdefectalign analysis
 ########################################
@@ -121,7 +126,6 @@ for def_dir in ${defect_path}*/; do
   if [[ ${def_dir} == *"FP"* ]]; then
     sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
   else
-    exit
     sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
   fi
   
@@ -130,7 +134,7 @@ for def_dir in ${defect_path}*/; do
   ########################################
   if [ "${plot_prog}" = "gnuplot" ]; then
     # vline-eV-a{0,1,2}.dat matrix format
-    # z V(long-range) ... & z V(defect)-V(ref) V(defect)-V(ref)-V(long-range) ...
+    # z V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range)
     gnuplot> call -c "${SCRIPT_DIR}/util/plnr_avgs.p" ${element_arr[@]}
   
     # vAtoms.dat format
