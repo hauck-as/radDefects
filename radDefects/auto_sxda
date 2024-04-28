@@ -131,14 +131,14 @@ for def_dir in ${defect_path}*/; do
   if [ "${plot_prog}" = "gnuplot" ]; then
     # vline-eV-a{0,1,2}.dat matrix format
     # z V(long-range) ... & z V(defect)-V(ref) V(defect)-V(ref)-V(long-range) ...
-    gnuplot> call "${SCRIPT_DIR}/util/plnr_avgs.p" "${element_arr[0]}" "${element_arr[1]}"
+    gnuplot> call -c "${SCRIPT_DIR}/util/plnr_avgs.p" ${element_arr[@]}
   
     # vAtoms.dat format
     # r V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range) x y z ...
     # empty lines between different species (need to include in plotting now)
     # replace empty lines with double empty lines to enable gnuplot index use
     sed -i -e 's/^$/\n/' vAtoms.dat
-    gnuplot> call "${SCRIPT_DIR}/util/atomic_sph_avg.p" Ga N
+    gnuplot> call -c "${SCRIPT_DIR}/util/atomic_sph_avg.p" ${element_arr[@]}
   fi
   
   cd ../../
