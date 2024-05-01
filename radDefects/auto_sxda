@@ -128,6 +128,7 @@ for def_dir in ${defect_path}*_*/; do
   defect=$(basename ${def_dir})
   defect_type=$(echo "${defect}" | rev | cut -d"_" -f2-  | rev)
   defect_chg=$(echo "${defect}" | rev | cut -d"_" -f1  | rev)
+  ele_diff=$(bc -l <<< "-1*${defect_chg}")
   
   echo "${defect_type} ${defect_chg}"
   echo "${defect_type}, q = ${defect_chg}" >> "${defect}.sxda"
@@ -166,21 +167,21 @@ for def_dir in ${defect_path}*_*/; do
     if [[ ${defect_chg} -gt 0 ]]; then
       echo "positive charge at interstitial"
       chg_offset=1
-      int_chg=$(echo "scale=0; ${defect_chg}+${chg_offset}" | bc)
-      vac_chg=$(echo "scale=0; 0-${chg_offset}" | bc)
+      int_chg=$(bc -l <<< "${ele_diff}-${chg_offset}")
+      vac_chg=$(bc -l <<< "0+${chg_offset}")
       
       sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${vac_chg} --pos ${int_pos_str} --charge ${int_chg} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
     elif [[ ${defect_chg} -lt 0 ]]; then
       echo "negative charge at vacancy"
-      sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${defect_chg} --pos ${int_pos_str} --charge 0 --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+      sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${ele_diff} --pos ${int_pos_str} --charge 0 --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
     else
       echo "neutral charge at center"
-      sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${defect_chg} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+      sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
     fi
-    # sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${defect_chg} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+    # sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${ele_diff} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
   else
     exit
-    sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${defect_chg} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+    sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${ele_diff} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
   fi
   
   ########################################
