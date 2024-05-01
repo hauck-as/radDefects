@@ -62,7 +62,12 @@ perfect_path="${defect_path}perfect/"
 ########################################
 # convert eV to Rydberg
 eV2Ry () {
-  echo "scale=16; ${1}*0.0734985857" | bc -l
+  echo "scale=10; ${1}*0.0734985857" | bc -l
+}
+
+# convert Angstroms to Bohr
+Ang2Bohr () {
+  echo "scale=10; ${1}*1.8897259886" | bc -l
 }
 
 # join array by delimiter
@@ -84,6 +89,24 @@ function join_by { local IFS="$1"; shift; echo "$*"; }
 ########################################
 # perform sxdefectalign analysis
 ########################################
+# get lattice parameters from optimized unitcell CONTCAR to determine averaging
+declare -a x1_arr=($(sed -n "3p" "${uc_opt_path}CONTCAR"))
+declare -a x2_arr=($(sed -n "4p" "${uc_opt_path}CONTCAR"))
+declare -a x3_arr=($(sed -n "5p" "${uc_opt_path}CONTCAR"))
+
+# calculate lattice parameters from vectors
+a=$(bc -l <<< "e( (1/2) * l((${x1_arr[0]}^2) + (${x1_arr[1]}^2) + (${x1_arr[2]}^2)) )")
+b=$(bc -l <<< "e( (1/2) * l((${x2_arr[0]}^2) + (${x2_arr[1]}^2) + (${x2_arr[2]}^2)) )")
+c=$(bc -l <<< "e( (1/2) * l((${x3_arr[0]}^2) + (${x3_arr[1]}^2) + (${x3_arr[2]}^2)) )")
+
+# convert lattice parameters to Bohr
+a_bohr=$(Ang2Bohr ${a})
+b_bohr=$(Ang2Bohr ${b})
+c_bohr=$(Ang2Bohr ${c})
+
+echo "Lattice parameters (Ang.): ${a}, ${b}, ${c}"
+echo "Lattice parameters (Bohr): ${a_bohr}, ${b_bohr}, ${c_bohr}"
+
 # dielectric tensor notation: eps_xx,eps_xy,eps_xz,eps_xy,eps_yy,eps_yz,eps_xz,eps_yz,eps_zz
 # gather dielectric tensor from unitcell.yaml
 declare -a eps_ele=($(niet ".ele_dielectric_const" "${unitcell_path}unitcell.yaml" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?')) || exit
@@ -97,7 +120,7 @@ done
 eps_tensor_str=$(join_by , ${eps_tensor[@]})
 echo "Dielectric tensor: ${eps_tensor_str}"
 
-for def_dir in ${defect_path}*/; do
+for def_dir in ${defect_path}*_*/; do
   # species from POSCAR
   declare -a element_arr=($(sed '6q;d' "${def_dir}POSCAR"))
   
@@ -107,26 +130,57 @@ for def_dir in ${defect_path}*/; do
   defect_chg=$(echo "${defect}" | rev | cut -d"_" -f1  | rev)
   
   echo "${defect_type} ${defect_chg}"
+  echo "${defect_type}, q = ${defect_chg}" >> "${defect}.sxda"
   
   # get and convert ENCUT from INCAR file
   encut_ev=$(grep ENCUT "${def_dir}INCAR" | grep -Eo '[0-9]+([.][0-9]+)?')
   encut_ry=$(eV2Ry ${encut_ev})
   
   echo "ENCUT = ${encut_ry} Ry"
+  echo "ENCUT = ${encut_ry} Ry" >> "${defect}.sxda"
+  
+  # get alignment term from defect_energy_info.yaml
+  alignment_C=$(niet ".energy_corrections" "${def_dir}defect_energy_info.yaml" -f newline)
+  alignment_C=${alignment_C//@(*: |\}*)/}
+  
+  echo "C = ${alignment_C} eV"
+  echo "C = ${alignment_C} eV" >> "${defect}.sxda"
   
   # defect center notation: x,y,z
   # gather defect center position from defect_entry.json
   declare -a defect_center=($(niet ".defect_center" "${def_dir}defect_entry.json" -f newline | grep -Eo '[+-]?[0-9]+([.][0-9]+)?')) || exit
   defect_center_str=$(join_by , ${defect_center[@]})
   
-  echo "Defect position = (${defect_center_str})"
+  declare -a vac_pos=(0.4666667362384516 0.3333333110428143 0.3330453429404585)
+  vac_pos_str=$(join_by , ${vac_pos[@]})
+  declare -a int_pos=(0.2171215306571241 0.5828821174423098 0.7366903974866901)
+  int_pos_str=$(join_by , ${int_pos[@]})
+  
+  echo "Defect center = (${defect_center_str})"
+  echo "Vacancy position = (${vac_pos_str})"
+  echo "Interstitial position = (${int_pos_str})"
   
   # perform analysis using sxdefectalign
   cd ${def_dir}
   if [[ ${def_dir} == *"FP"* ]]; then
-    sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
+    if [[ ${defect_chg} -gt 0 ]]; then
+      echo "positive charge at interstitial"
+      chg_offset=1
+      int_chg=$(echo "scale=0; ${defect_chg}+${chg_offset}" | bc)
+      vac_chg=$(echo "scale=0; 0-${chg_offset}" | bc)
+      
+      sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${vac_chg} --pos ${int_pos_str} --charge ${int_chg} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+    elif [[ ${defect_chg} -lt 0 ]]; then
+      echo "negative charge at vacancy"
+      sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${defect_chg} --pos ${int_pos_str} --charge 0 --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+    else
+      echo "neutral charge at center"
+      sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${defect_chg} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
+    fi
+    # sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${defect_chg} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
   else
-    sxdefectalign --ecut ${encut_ry} --charge ${defect_chg} --tensor ${eps_tensor_str} --center ${defect_center_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix || exit
+    exit
+    sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${defect_chg} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
   fi
   
   ########################################
