@@ -8,8 +8,8 @@ unset label
 set xtic auto
 set ytic auto
 set ylabel "potential [eV]"
-set output "vline-eV.png"
-set multiplot layout 1,3 columns title "Planar Averaged Potentials"
+set output "vline-eV_" . ARG3 . ".png"
+set multiplot layout 1,3 columns title "Planar Averaged Potentials (" . ARG4 . ")"
 unset title
 unset key
 set size 0.27,0.95

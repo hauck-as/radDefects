@@ -7,12 +7,12 @@ unset log
 unset label
 set xtic auto
 set ytic auto
-set title "Atomic Sphere Averages"
+set title "Atomic Sphere Averages (" . ARG4 . ")"
 set rmargin 24
 set key rmargin
 set xlabel "r [bohr]"
 set ylabel "potential [eV]"
-set output "vAtoms.png"
+set output "vAtoms_" . ARG3 . ".png"
 plot "vAtoms.dat" i 0 u 1:3 t 'V_{defect} - V_{ref} (' . ARG1 . ')' w points, \
 "vAtoms.dat" i 1 u 1:3 t 'V_{defect} - V_{ref} (' . ARG2 . ')' w points, \
 "vAtoms.dat" i 0:1 u 1:2 t 'V_{lr}' w points, \
