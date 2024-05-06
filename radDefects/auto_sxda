@@ -10,23 +10,33 @@ Help()
    # Display Help
    echo "Automated sxdefectalign analysis of rad-induced defects using pydefect directory structure."
    echo
-   echo "Syntax: bash ~/work/bin/radDefects/radDefects/auto_sxda [-p|h]"
+   echo "Syntax: bash ~/work/bin/radDefects/radDefects/auto_sxda [-d|c|p|h]"
    echo "options:"
+   echo "d     Defect categories to analyze: Frenkel pairs and/or single intrinsic"
+   echo "c     Charge offset between defect pairs"
    echo "p     Plotting program choice or no plotting: gnuplot or none"
    echo "h     Print this Help."
    echo
 }
 
-usage() { echo "Usage: $0 [-h] [-p <gnuplot|none>]" 1>&2; exit 1; }
+usage() { echo "Usage: $0 [-h] [-d <s|f|sf>] [-c <int>] [-p <gnuplot|none>]" 1>&2; exit 1; }
 
+analyze_defects="sf"
+chg_offset=0
 plot_prog="gnuplot"
 
 # get the options
-while getopts ":h:" o; do
+while getopts ":h:d:c:p:" o; do
   case "${o}" in
     h) # display Help
       Help
       exit;;
+    d) # Enter defect types to analyze
+      analyze_defects=${OPTARG}
+      ;;
+    c) # Enter charge offset between defects in pair
+      chg_offset=${OPTARG}
+      ;;
     p) # Enter plotting program
       plot_prog=${OPTARG}
       ((plot_prog == "gnuplot" || plot_prog == "none")) || usage
@@ -185,18 +195,21 @@ for def_dir in ${defect_path}*_*/; do
   # FP defects
   ########################################
   if [[ ${def_dir} == *"FP"* ]]; then
-
+    # check if Frenkel pairs are selected for analysis
+    if [[ "${analyze_defects}" != *"f"* ]]; then
+      continue
+    fi
+    
     # positively charged FPs
     if [[ ${defect_chg} -gt 0 ]]; then
       echo "positive charge at interstitial"
       # create charge offset between interstitial and vacancy sites
-      chg_offset=0
       int_ele_diff=$(bc -l <<< "${ele_diff} - ${chg_offset}")
       vac_ele_diff=$(bc -l <<< "${chg_offset}")
       
       # convert defect charge into difference in electron number
-      int_chg=$(echo "scale=2; -1*${int_ele_diff}" | bc -l)
-      vac_chg=$(echo "scale=2; -1*${vac_ele_diff}" | bc -l)
+      int_chg=$(printf "%.2f\n" $(bc -l <<< "-1*${int_ele_diff}"))
+      vac_chg=$(printf "%.2f\n" $(bc -l <<< "-1*${vac_ele_diff}"))
     
       # reset plot name and title variables for FPs
       defect_file_str="${defect}_qv${vac_chg}qi${int_chg}"
@@ -208,13 +221,12 @@ for def_dir in ${defect_path}*_*/; do
     elif [[ ${defect_chg} -lt 0 ]]; then
       echo "negative charge at vacancy"
       # create charge offset between interstitial and vacancy sites
-      chg_offset=0
       int_ele_diff=$(bc -l <<< "-1 * ${chg_offset}")
       vac_ele_diff=$(bc -l <<< "${ele_diff} + ${chg_offset}")
       
       # convert defect charge into difference in electron number
-      int_chg=$(bc -l <<< "-1*${int_ele_diff}")
-      vac_chg=$(bc -l <<< "-1*${vac_ele_diff}")
+      int_chg=$(printf "%.2f\n" $(bc -l <<< "-1*${int_ele_diff}"))
+      vac_chg=$(printf "%.2f\n" $(bc -l <<< "-1*${vac_ele_diff}"))
     
       # reset plot name and title variables for FPs
       defect_file_str="${defect}_qv${vac_chg}qi${int_chg}"
@@ -226,19 +238,18 @@ for def_dir in ${defect_path}*_*/; do
     else
       echo "neutral charge"
       # create charge offset between interstitial and vacancy sites
-      chg_offset=8
       int_ele_diff=$(bc -l <<< "-1 * ( ${chg_offset} / 2 )")
       vac_ele_diff=$(bc -l <<< "${chg_offset} / 2")
       
       # convert defect charge into difference in electron number
-      int_chg=$(bc -l <<< "-1*${int_ele_diff}")
-      vac_chg=$(bc -l <<< "-1*${vac_ele_diff}")
+      int_chg=$(printf "%.2f\n" $(bc -l <<< "-1*${int_ele_diff}"))
+      vac_chg=$(printf "%.2f\n" $(bc -l <<< "-1*${vac_ele_diff}"))
     
       # reset plot name and title variables for FPs
       defect_file_str="${defect}_qv${vac_chg}qi${int_chg}"
       defect_title_str="${defect_atom}_{${defect_site}, q=${defect_chg}, qv=${vac_chg}, qi=${int_chg}}"
       
-      sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${vac_ele_diff} --pos ${int_pos_str} --charge ${int_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect_file_str}.sxda" || exit
+      sxdefectalign --ecut ${encut_ry} --pos ${int_pos_str} --charge ${int_ele_diff} --pos ${vac_pos_str} --charge ${vac_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect_file_str}.sxda" || exit
     fi
     
     # previous treatment based on defect center
@@ -248,6 +259,11 @@ for def_dir in ${defect_path}*_*/; do
   # intrinsic point defects
   ########################################
   else
+    # check if single point defects are selected for analysis
+    if [[ "${analyze_defects}" != *"s"* ]]; then
+      continue
+    fi
+    
     sxdefectalign --ecut ${encut_ry} --center ${defect_center_str} --charge ${ele_diff} --tensor ${eps_tensor_str} --average ${c_bohr} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee "${defect}.sxda" || exit
   fi
   
