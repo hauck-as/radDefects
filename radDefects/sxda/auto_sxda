@@ -220,6 +220,7 @@ for def_dir in ${defect_path}*_*/; do
       # reset plot name and title variables for FPs
       defect_file_str="${defect}_qv${vac_chg}qi${int_chg}"
       defect_title_str="${defect_atom}_{${defect_site}, q=${defect_chg}, qv=${vac_chg}, qi=${int_chg}}"
+      mv -f "${defect}.sxda" "${defect_file_str}.sxda"
       
       sxdefectalign --ecut ${encut_ry} --pos ${int_pos_str} --charge ${int_ele_diff} --pos ${vac_pos_str} --charge ${vac_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee -a "${defect_file_str}.sxda" || exit
 
@@ -237,6 +238,7 @@ for def_dir in ${defect_path}*_*/; do
       # reset plot name and title variables for FPs
       defect_file_str="${defect}_qv${vac_chg}qi${int_chg}"
       defect_title_str="${defect_atom}_{${defect_site}, q=${defect_chg}, qv=${vac_chg}, qi=${int_chg}}"
+      mv -f "${defect}.sxda" "${defect_file_str}.sxda"
       
       sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${vac_ele_diff} --pos ${int_pos_str} --charge ${int_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee -a "${defect_file_str}.sxda" || exit
 
@@ -254,6 +256,7 @@ for def_dir in ${defect_path}*_*/; do
       # reset plot name and title variables for FPs
       defect_file_str="${defect}_qv${vac_chg}qi${int_chg}"
       defect_title_str="${defect_atom}_{${defect_site}, q=${defect_chg}, qv=${vac_chg}, qi=${int_chg}}"
+      mv -f "${defect}.sxda" "${defect_file_str}.sxda"
       
       sxdefectalign --ecut ${encut_ry} --pos ${int_pos_str} --charge ${int_ele_diff} --pos ${vac_pos_str} --charge ${vac_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee -a "${defect_file_str}.sxda" || exit
     fi
@@ -279,14 +282,14 @@ for def_dir in ${defect_path}*_*/; do
   if [ "${plot_prog}" = "gnuplot" ]; then
     # vline-eV-a{0,1,2}.dat matrix format
     # z V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range)
-    gnuplot> call -c "${SCRIPT_DIR}/util/plnr_avgs.p" ${element_arr[@]} "${defect_file_str}" "${defect_title_str}"
+    gnuplot> call -c "${SCRIPT_DIR}/plnr_avgs.p" ${element_arr[@]} "${defect_file_str}" "${defect_title_str}"
   
     # vAtoms.dat format
     # r V(long-range) V(defect)-V(ref) V(defect)-V(ref)-V(long-range) x y z ...
     # empty lines between different species (need to include in plotting now)
     # replace empty lines with double empty lines to enable gnuplot index use
     sed -i -e 's/^$/\n/' vAtoms.dat
-    gnuplot> call -c "${SCRIPT_DIR}/util/atomic_sph_avg.p" ${element_arr[@]} "${defect_file_str}" "${defect_title_str}"
+    gnuplot> call -c "${SCRIPT_DIR}/atomic_sph_avg.p" ${element_arr[@]} "${defect_file_str}" "${defect_title_str}"
   fi
   
   cd ../../
