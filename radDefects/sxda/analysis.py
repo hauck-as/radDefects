@@ -20,6 +20,8 @@ from pydefect.analyzer.band_edge_states import BandEdgeOrbitalInfos, BandEdgeSta
 from pydefect.analyzer.defect_energy import DefectEnergyInfo, ChargeEnergies, SingleChargeEnergies, CrossPoints
 from pydefect.analyzer.transition_levels import TransitionLevels, make_transition_levels
 
+from raddefects.sxda.io import parse_sxda_vatoms
+
 
 def sxda_transition_levels(base_path=os.getcwd(), chg_offset=0):
     """
@@ -112,4 +114,49 @@ def sxda_transition_levels(base_path=os.getcwd(), chg_offset=0):
     )
     
     return sxda_tls
+
+
+def atomic_potential_convergence(base_path=os.getcwd()):
+    """
+    Calculates the convergence for atomic site potential data from sxdefectalign
+    calculations in terms of averages and standard deviations within the sampling
+    region.
+    """
+    # defect directory
+    defect_path=os.path.join(base_path, 'defect')
+    
+    # gather pydefect defect directories
+    defect_paths = glob.glob(os.path.join(defect_path, '*_*/'), recursive=True)
+    
+    # empty dictionary for alignment averages and standard deviations
+    alignment_dict = {}
+    
+    for defect_dir in defect_paths:
+        # get defect type and charge from defect directory
+        defect = os.path.basename(os.path.dirname(defect_dir))
+        defect_type, defect_chg = '_'.join(defect.split('_')[0:2]), int(defect.split('_')[2])
+        
+        # use parse_sxda_vatoms on directory
+        vatoms = parse_sxda_vatoms(defect_dir)
+    
+        # use lattice parameters for defect region radius or use pydefect correction.json file
+        if os.path.isfile(os.path.join(defect_dir, 'correction.json')):
+            correction_json = loadfn(os.path.join(defect_dir, 'correction.json'))
+            defect_region_radius = correction_json.defect_region_radius
+        else:
+            contcar_filepath = os.path.join(filepath, 'CONTCAR')
+            contcar = Poscar.from_file(contcar_filepath)
+            abc = np.array(contcar.structure.lattice.abc)
+            abc /= 2.
+            defect_region_radius = np.min(abc)
+    
+        # alignment stats (mean, stdev) from atomic site potential dataframe with r>defect_region_radius
+        vatoms_total = pd.concat((vatoms[i] for i in vatoms.keys()))
+        vatoms_sample_region = vatoms_total.where(vatoms_total['r']>defect_region_radius)
+        alignment_average = vatoms_sample_region.loc[:, 'V_defect-V_ref-V_lr'].mean(skipna=True)
+        alignment_stdev = vatoms_sample_region.loc[:, 'V_defect-V_ref-V_lr'].std(skipna=True)
+        
+        alignment_dict.update({defect: (alignment_average, alignment_stdev)})
+    
+    return alignment_dict
 
