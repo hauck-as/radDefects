@@ -80,9 +80,16 @@ def get_mpid_from_supercell(perfect_poscar_path):
         mpid_dict = {doc.material_id: [doc.composition, doc.symmetry, doc.band_gap, doc.structure] for doc in docs}
         if len(mpid_dict.keys()) == 1:
             unitcell_mpid = list(mpid_dict.keys())[0]
+            unitcell_info = {
+                'mpid': unitcell_mpid,
+                'composition': mpid_dict[unitcell_mpid][0],
+                'symmetry': mpid_dict[unitcell_mpid][1],
+                'band_gap': mpid_dict[unitcell_mpid][2],
+                'structure': mpid_dict[unitcell_mpid][3]
+            }
         else:
             raise UserWarning('Multiple matching structures were found.')
-    return unitcell_mpid
+    return unitcell_info
 
 
 # band edge orbital infos gives fermi level, states below should be occupied and above should be unoccupied
