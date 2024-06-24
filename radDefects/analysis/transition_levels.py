@@ -32,9 +32,13 @@ pl_paper_theme.layout.xaxis.ticks = 'inside'
 pl_paper_theme.layout.yaxis.ticks = 'inside'
 pl_paper_theme.layout.xaxis.mirror = 'ticks'  # True | "ticks" | False | "all" | "allticks"
 pl_paper_theme.layout.yaxis.mirror = 'ticks'  # True | "ticks" | False | "all" | "allticks"
-pl_paper_theme.layout.font.size = 22
-pl_paper_theme.layout.xaxis.title.font.size = 24
-pl_paper_theme.layout.yaxis.title.font.size = 40
+pl_paper_theme.layout.font.size = 32
+# pl_paper_theme.layout.xaxis.title.standoff = 20
+pl_paper_theme.layout.xaxis.title.font.size = 44
+pl_paper_theme.layout.xaxis.tickfont.size = 36
+pl_paper_theme.layout.yaxis.title.standoff = 24
+pl_paper_theme.layout.yaxis.title.font.size = 28
+#pl_paper_theme.layout.coloraxis.colorbar.title.standoff = 20
 pio.templates.default = pl_paper_theme
 
 
@@ -43,6 +47,8 @@ def generate_transition_level_diagram(transition_levels, im_write=False, im_name
     Given a TransitionLevels object from pydefect, plots a charge transition level diagram
     showing the Fermi energy levels and which charges for each defect calculated.
     """
+    # add capability to remove defects without transition levels or that are not of interest
+    # ex. transition_levels.transition_levels.pop(3)
     defects_list = [defect.name for defect in transition_levels.transition_levels]
     
     fig = go.Figure()
@@ -57,9 +63,9 @@ def generate_transition_level_diagram(transition_levels, im_write=False, im_name
                                          text=[f'{transition_levels.transition_levels[i].charges[j][0]:+}/{transition_levels.transition_levels[i].charges[j][1]:+}' for j in range(len(defect_fermi_levels))],
                                          mode='markers+text',
                                          marker=dict(symbol='line-ew-open',
-                                                     size=36,
-                                                     color=px.colors.qualitative.Set1[i],
-                                                     line=dict(width=8)
+                                                     size=28,
+                                                     color=px.colors.qualitative.Plotly[i],
+                                                     line=dict(width=6)
                                                     )
                                         ))
         else:
@@ -79,11 +85,12 @@ def generate_transition_level_diagram(transition_levels, im_write=False, im_name
     fig.add_hrect(y0=transition_levels.supercell_cbm, y1=transition_levels.supercell_cbm+0.2, line_width=0, fillcolor='blue', opacity=0.2)
 
     fig.update_layout(xaxis_title=r'Defects',
-                      yaxis_title=r'$E_{F} \; [eV]$',
+                      yaxis_title=r'$\Huge{E_{F} \; [eV]}$',
                       xaxis_type='category',
+                      yaxis_showticklabels=False,
                       showlegend=False,
                       margin=dict(l=20, r=20, t=20, b=20),
-                      autosize=False, width = 1200, height = 900
+                      autosize=False, width = 850, height = 650
                      )
 
     fig.show()
