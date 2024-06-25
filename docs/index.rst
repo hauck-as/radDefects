@@ -7,7 +7,7 @@ radDefects
 ------------
 Installation
 ------------
-Automatic installation is available with ``pip install raddefects``. The files may be either downloaded manually or using ``git clone``.
+Automatic installation is available with ``pip install raddefects``. The files may also be either downloaded manually or using ``git clone``.
 
 -----
 Usage
