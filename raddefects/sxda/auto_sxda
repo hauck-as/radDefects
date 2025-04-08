@@ -12,7 +12,7 @@ Help()
    echo
    echo "Syntax: bash ~/work/bin/radDefects/radDefects/auto_sxda [-d|c|p|h]"
    echo "options:"
-   echo "d     Defect categories to analyze: Frenkel pairs and/or single intrinsic"
+   echo "d     Defect categories to analyze: defect complexes and/or single intrinsic"
    echo "c     Charge offset between defect pairs"
    echo "p     Plotting program choice or no plotting: gnuplot or none"
    echo "h     Print this Help."
@@ -183,9 +183,17 @@ for def_dir in ${defect_path}*_*/; do
   # should determine vacancy and interstitial positions for each charge and add to defect_entry.json
   # then can pull positions similar to defect center for use in sxda
   # use of EIGENVAL for default charge offset?
-  declare -a vac_pos=(0.4666667362384516 0.3333333110428143 0.3330453429404585)
+  
+  # Ga_FP1 pos
+  # declare -a vac_pos=(0.4666667362384516 0.3333333110428143 0.3330453429404585)
+  # VV_GaN pos
+  declare -a vac_pos=(0.1666666667000030  0.0833333332999970  0.2495566444000019)
   vac_pos_str=$(join_by , ${vac_pos[@]})
-  declare -a int_pos=(0.2171215306571241 0.5828821174423098 0.7366903974866901)
+  
+  # Ga_FP1 pos
+  # declare -a int_pos=(0.2171215306571241 0.5828821174423098 0.7366903974866901)
+  # VV_GaN pos
+  declare -a int_pos=(0.1666666667000030  0.0833333332999970  0.4379433555999981)
   int_pos_str=$(join_by , ${int_pos[@]})
   
   echo "Defect center = (${defect_center_str})"
@@ -198,15 +206,16 @@ for def_dir in ${defect_path}*_*/; do
   cd ${def_dir}
   
   ########################################
-  # FP defects
+  # Defect complexes
+  # [[ ${def_dir} == *"FP"* || ${def_dir} == *"VV"* ]]; then
   ########################################
-  if [[ ${def_dir} == *"FP"* ]]; then
-    # check if Frenkel pairs are selected for analysis
+  if [[ ${def_dir} == *"VV"* ]]; then
+    # check if complexes are selected for analysis
     if [[ "${analyze_defects}" != *"f"* ]]; then
       continue
     fi
     
-    # positively charged FPs
+    # positively charged complexes
     if [[ ${defect_chg} -gt 0 ]]; then
       echo "positive charge at interstitial"
       # create charge offset between interstitial and vacancy sites
@@ -224,7 +233,7 @@ for def_dir in ${defect_path}*_*/; do
       
       sxdefectalign --ecut ${encut_ry} --pos ${int_pos_str} --charge ${int_ele_diff} --pos ${vac_pos_str} --charge ${vac_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee -a "${defect_file_str}.sxda" || exit
 
-    # negatively charged FPs
+    # negatively charged complexes
     elif [[ ${defect_chg} -lt 0 ]]; then
       echo "negative charge at vacancy"
       # create charge offset between interstitial and vacancy sites
@@ -242,7 +251,7 @@ for def_dir in ${defect_path}*_*/; do
       
       sxdefectalign --ecut ${encut_ry} --pos ${vac_pos_str} --charge ${vac_ele_diff} --pos ${int_pos_str} --charge ${int_ele_diff} --tensor ${eps_tensor_str} --relative --vdef "${def_dir}LOCPOT" --vref "${perfect_path}LOCPOT" --vasp --format=matrix -C ${alignment_C} 2>&1 | tee -a "${defect_file_str}.sxda" || exit
 
-    # neutral FPs
+    # neutral complexes
     else
       echo "neutral charge"
       # create charge offset between interstitial and vacancy sites
