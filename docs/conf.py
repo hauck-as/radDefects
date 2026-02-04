@@ -93,9 +93,9 @@ epub_show_urls = 'footnote'
 # -- Autodoc configuration
 autodoc_mock_imports = [
     'os', 'sys', 'pathlib', 'logging', 'typing', 'io',
-    're', 'pprint', 'glob',
+    'importlib', 'string', 're', 'pprint', 'glob', 'contextlib',
     'shutil', 'json', 'yaml', 'monty', 'itertools',
     'math', 'numpy', 'pandas', 'random',
-    'matplotlib', 'mpl_toolkits', 'plotly',
+    'matplotlib', 'mpl_toolkits', 'plotly', 'pypdf', 'fpdf',
     'pymatgen', 'pydefect', 'nonrad', 'doped', 'sumo', 'mp_api'
     ]

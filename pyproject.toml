@@ -21,6 +21,8 @@ dependencies = [
     "mp-api",
     "vise",
     "pydefect",
+    "nonrad",
+    "doped",
     "sumo",
     "pymatgen-analysis-defects",
     "niet"

@@ -18,3 +18,13 @@ Usage
 Acknowledgements
 ----------------
 The radDefects code was developed by Alexander Hauck, Dr. Mia Jin, and Dr. Blair Tuttle at The Pennsylvania State University. 
+
+.. toctree::
+    :hidden:
+    :caption: Usage
+    :maxdepth: 4
+
+    Installation
+    Tutorials
+    radDefects API <raddefects>
+    Development

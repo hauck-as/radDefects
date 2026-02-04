@@ -7,6 +7,8 @@ pymatgen-analysis-defects
 mp-api
 vise
 pydefect
+nonrad
+doped
 sumo
 niet
 sphinx_book_theme
