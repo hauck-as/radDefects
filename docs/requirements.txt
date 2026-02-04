@@ -11,5 +11,6 @@ nonrad
 doped
 sumo
 niet
+nbsphinx
 sphinx-click
 sphinx_book_theme
