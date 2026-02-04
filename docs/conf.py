@@ -1,14 +1,21 @@
 # Configuration file for the Sphinx documentation builder.
 # Templated from both RTD tutorial and doped by SMTG-Bham.
 
+# -- Build on source
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path('..').resolve()))
+
 # -- Project information
 
 project = 'radDefects'
 copyright = '2024, Alexander S. Hauck'
 author = 'Alexander S. Hauck'
 
-release = '0.1'
-version = '0.1.3'
+release = '1.0'
+version = '1.0.0'
 
 # -- General configuration
 
@@ -16,6 +23,7 @@ extensions = [
     'sphinx.ext.duration',
     'sphinx.ext.doctest',
     'sphinx.ext.autodoc',
+    'sphinx_click',
     'sphinx.ext.autosummary',
     'sphinx.ext.intersphinx',
     'sphinx.ext.coverage',
@@ -23,6 +31,7 @@ extensions = [
     'sphinx.ext.mathjax',
     'sphinx.ext.viewcode',
     'sphinx.ext.autosectionlabel',
+    'nbsphinx',
     'sphinx_book_theme',
 ]
 
@@ -43,7 +52,7 @@ html_theme = 'sphinx_book_theme'
 
 # The name of an image file (relative to this directory) to place at the top
 # of the sidebar.
-# html_logo = "rad-defects-logo.png"
+html_logo = "raddef_logo.png"
 html_title = "radDefects"
 
 # If true, SmartyPants will be used to convert quotes and dashes to
@@ -80,3 +89,13 @@ html_context = {
 
 # -- Options for EPUB output
 epub_show_urls = 'footnote'
+
+# -- Autodoc configuration
+autodoc_mock_imports = [
+    'os', 'sys', 'pathlib', 'logging', 'typing', 'io',
+    're', 'pprint', 'glob',
+    'shutil', 'json', 'yaml', 'monty', 'itertools',
+    'math', 'numpy', 'pandas', 'random',
+    'matplotlib', 'mpl_toolkits', 'plotly',
+    'pymatgen', 'pydefect', 'nonrad', 'doped', 'sumo', 'mp_api'
+    ]

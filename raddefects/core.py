@@ -1,57 +1,47 @@
 """Core functions and classes for analyzing rad-induced defects from VASP."""
-import logging
 from typing import TYPE_CHECKING, Optional
-import importlib.resources as ilr
 
 import os
-import glob
 from pathlib import Path
-import shutil
 import json
-from monty.serialization import dumpfn, loadfn
-from monty.json import MSONable, MontyEncoder, MontyDecoder
-
-import subprocess
-import re
-import pprint
-
-import math as m
-from fractions import Fraction
-import random as rand
 
 import numpy as np
 import pandas as pd
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 
-from pymatgen.io.vasp.sets import VaspInputSet, Poscar
-from pymatgen.io.vasp.outputs import Locpot, Outcar, Vasprun
+from pymatgen.io.vasp.sets import Poscar
+from pymatgen.io.vasp.outputs import Locpot
 from pymatgen.core import Structure, Lattice
-from pymatgen.io.vasp.sets import MPRelaxSet
 from pymatgen.symmetry.analyzer import *
-from pymatgen.analysis.defects.core import DefectComplex, Substitution, Vacancy
-from pymatgen.analysis.defects.finder import DefectSiteFinder
 from mp_api.client import MPRester
 
-from pydefect.analyzer.unitcell import Unitcell
-from pydefect.analyzer.band_edge_states import BandEdgeOrbitalInfos, BandEdgeState, PerfectBandEdgeState
-from pydefect.analyzer.calc_results import CalcResults
-from pydefect.analyzer.defect_energy import DefectEnergyInfo
-from pydefect.input_maker.defect_entry import DefectEntry
-from pydefect.corrections.efnv_correction import ExtendedFnvCorrection
-
-from doped.analysis import DefectParser, DefectsParser
-
-# pydefect file structure
-base_path = os.getcwd()
-cpd_path, defects_path, unitcell_path, band_path, diele_path, dos_path, struc_opt_path = os.path.relpath('cpd'), os.path.relpath('defect'), os.path.relpath('unitcell'), os.path.relpath('unitcell/band'), os.path.relpath('unitcell/dielectric'), os.path.relpath('unitcell/dos'), os.path.relpath('unitcell/structure_opt')
-pydefect_paths = [cpd_path, defects_path, unitcell_path, band_path, diele_path, dos_path, struc_opt_path]
+from pydefect.analyzer.band_edge_states import BandEdgeOrbitalInfos, PerfectBandEdgeState
 
 
-# create pydefect file structure
-def create_pydefect_file_structure():
-    os.makedirs([os.path.join(base_path, i) for i in pydefect_paths])
-    return
+def create_pydefect_file_structure(base_path=Path.cwd(), create_dirs=False):
+    """Creates standard pydefect file structure under given base path."""
+    cpd_path = base_path / 'cpd'
+    defects_path = base_path / 'defect'
+    unitcell_path = base_path / 'unitcell'
+
+    band_path = unitcell_path / 'band'
+    dielectric_path = unitcell_path / 'dielectric'
+    dos_path = unitcell_path / 'dos'
+    structure_opt_path = unitcell_path / 'structure_opt'
+
+    pydefect_paths = {
+        'cpd': cpd_path,
+        'defect': defects_path,
+        'unitcell': unitcell_path,
+        'band': band_path,
+        'dielectric': dielectric_path,
+        'dos': dos_path,
+        'structure_opt': structure_opt_path
+        }
+
+    if create_dirs:
+        os.makedirs(list(pydefect_paths.values()))
+
+    return pydefect_paths
 
 
 # maybe define class for defective supercells
@@ -192,62 +182,10 @@ def get_plnr_avg_only(
     return corr_metadata
 
 
-def plot_plnr_avg_only(plot_data, title=None, ax=None, style_file=None):
+def lattice_param_thermal_expansion(x0, cte_x, dT):
     """
-    Plots exclusively the planar-averaged electrostatic potential.
-
-    Original code templated from the original PyCDT and new
-    pymatgen.analysis.defects implementations as plot_FNV in doped.
-    Functionality for plotting only the planar-averaged electrostatic
-    potential is kept.
-
-    Args:
-         plot_data (dict):
-            Dictionary of Freysoldt correction metadata to plot
-            (i.e. defect_entry.corrections_metadata["plot_data"][axis] where
-            axis is one of [0, 1, 2] specifying which axis to plot along (a, b, c)).
-         title (str): Title for the plot. Default is no title.
-         ax (matplotlib.axes.Axes): Axes object to plot on. If None, makes new figure.
-         style_file (str):
-            Path to a mplstyle file to use for the plot. If None (default), uses
-            the default doped style (from doped/utils/doped.mplstyle).
+    Given the initial lattice parameter, the coefficient of thermal expansion for the
+    given lattice parameter, and the temperature difference, returns the expected
+    lattice parameter value at the desired temperature.
     """
-
-    x = plot_data["x"]
-    dft_diff = plot_data["dft_diff"]
-
-    style_file = style_file or f"{ilr.files('doped')}/utils/doped.mplstyle"
-    plt.style.use(style_file)  # enforce style, as style.context currently doesn't work with jupyter
-    with plt.style.context(style_file):
-        if ax is None:
-            plt.close("all")  # close any previous figures
-            fig, ax = plt.subplots()
-        (line1,) = ax.plot(x, dft_diff, c="red", label=r"$\Delta$(Locpot)")
-        leg1 = ax.legend(handles=[line1], loc=9)  # middle top legend
-        ax.add_artist(leg1)  # so isn't overwritten with later legend call
-
-        ax.set_xlim(round(x[0]), round(x[-1]))
-        ymin = min(*dft_diff)
-        ymax = max(*dft_diff)
-        ax.set_ylim(-0.2 + ymin, 0.2 + ymax)
-        ax.set_xlabel(r"Distance along axis ($\AA$)")
-        ax.set_ylabel("Potential (V)")
-        ax.axhline(y=0, linewidth=0.2, color="black")
-        if title is not None:
-            ax.set_title(str(title))
-        ax.set_xlim(0, max(x))
-
-        return ax
-    
-
-def plot_plnr_avg_abc(plot_data, title=None, ax=None, style_file=None):
-    axis_label_dict = {0: r"$a$-axis", 1: r"$b$-axis", 2: r"$c$-axis"}
-    fig, axs = plt.subplots(1, 3, sharey=True, figsize=(12, 3.5), dpi=600)
-    for direction in range(3):
-        plot_plnr_avg_only(
-            plot_data['plot_data'][direction]['pot_plot_data'],
-            ax=axs[direction],
-            title=axis_label_dict[direction]
-        )
-    return
-
+    return x0*(1 + (cte_x*dT))

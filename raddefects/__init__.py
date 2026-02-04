@@ -7,4 +7,4 @@ radDefects is a Python-based framework to analyze properties of radiation-induce
 __author__ = "Alexander Hauck"
 __copyright__ = "Copyright (C) 2024 Alexander Hauck"
 __license__ = "MIT License"
-__version__ = "0.0.1"
+__version__ = "1.0.0"

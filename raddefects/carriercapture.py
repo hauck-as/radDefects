@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Python module used to setup and analyze carrier capture calculations using VASP."""
 import os
-import sys
 from pathlib import Path
 import shutil
-import json
+import re
 import yaml
 from monty.serialization import dumpfn, loadfn
 from itertools import zip_longest
@@ -25,7 +24,7 @@ from pydefect.analyzer.transition_levels import TransitionLevels
 from nonrad.ccd import get_dQ, get_Q_from_struct, get_cc_structures
 from nonrad.elphon import get_Wif_from_WSWQ
 from nonrad.scaling import sommerfeld_parameter, charged_supercell_scaling_VASP
-import sumo.electronic_structure.effective_mass as sem
+# import sumo.electronic_structure.effective_mass as sem
 
 
 def create_carrier_capture_disp_vasp_inputs(poscar_structure, charge, disp_factor, potcar=None, incar_settings={}):
@@ -54,13 +53,13 @@ def create_carrier_capture_disp_vasp_inputs(poscar_structure, charge, disp_facto
         'NCORE': 12,
         'LREAL': 'Auto',
         'EDIFF': 1e-05,
-        'ALGO': 'Normal',
+        'ALGO': 'All',
         'ENCUT': 400.0,
         'PREC': 'Accurate',
         'LHFCALC': True,
         'GGA': 'PE',
         'HFSCREEN': 0.2,
-        'AEXX': 0.31,
+        'AEXX': 0.305,
         'ISMEAR': 0,
         'SIGMA': 0.05,
         'SYMPREC': 0.001,
@@ -140,10 +139,10 @@ def setup_carrier_capture_from_pydefect(defect_name, q_initial, q_final, displac
     excited_struct, ground_struct = excited_poscar.structure, ground_poscar.structure
 
     displacements = np.array([-1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0]) if displacements is None else displacements
-    if struct_gen_type.lower() == 'carriercapture.jl':
+    if struct_gen_type.lower()[0] == 'c':
         ground = carriercapturejl_interpolate(ground_struct, excited_struct, disp_range=displacements)
         excited = carriercapturejl_interpolate(excited_struct, ground_struct, disp_range=displacements)
-    elif struct_gen_type.lower() == 'nonrad':
+    elif struct_gen_type.lower()[0] == 'n':
         ground, excited = get_cc_structures(ground_struct, excited_struct, displacements, remove_zero=False)
     else:
         raise ValueError('Please choose a valid method for generating displacement structures: CarrierCapture.jl or Nonrad')
@@ -169,7 +168,7 @@ def setup_carrier_capture_from_pydefect(defect_name, q_initial, q_final, displac
     return capture_calc_path
 
 
-def create_carrier_capture_wav_vasp_inputs(disp_dir, wav_dir, charge=0, potcar=None, incar_settings={}):
+def create_carrier_capture_wav_vasp_inputs(disp_dir, charge=0, potcar=None, incar_settings={}):
     """
     Read in VASP inputs from carrier capture displacement calculations and create VASP inputs for WAVECAR calculations.
     """
@@ -220,18 +219,18 @@ def setup_carrier_capture_wav(defect_name, q_initial, q_final, cc_path=Path.cwd(
 
         # setup WAVECAR calcs for excited structures
         disp_calc_path_i, wav_calc_path_i = capture_initial_path / f'DISP_{disp_suffix}', capture_initial_path / f'WAV_{disp_suffix}'
-        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(disp_calc_path_i, wav_calc_path_i, charge=q_initial, potcar=potcar, incar_settings=incar_settings)
+        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(disp_calc_path_i, charge=q_initial, potcar=potcar, incar_settings=incar_settings)
         vasp_wav_inputs.write_input(wav_calc_path_i, make_dir_if_not_present=True)
 
         # setup WAVECAR calcs for ground structures
         disp_calc_path_f, wav_calc_path_f = capture_final_path / f'DISP_{disp_suffix}', capture_final_path / f'WAV_{disp_suffix}'
-        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(disp_calc_path_f, wav_calc_path_f, charge=q_final, potcar=potcar, incar_settings=incar_settings)
+        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(disp_calc_path_f, charge=q_final, potcar=potcar, incar_settings=incar_settings)
         vasp_wav_inputs.write_input(wav_calc_path_f, make_dir_if_not_present=True)
         
-    return
+    return None
 
 
-def create_carrier_capture_wswq_vasp_inputs(wav_dir, wswq_dir, charge=0, potcar=None, incar_settings={}):
+def create_carrier_capture_wswq_vasp_inputs(wav_dir, charge=0, potcar=None, incar_settings={}):
     """
     Read in VASP inputs from carrier capture WAVECAR calculations and create VASP inputs for WSWQ calculations.
     """
@@ -281,17 +280,17 @@ def setup_carrier_capture_wswq(defect_name, q_initial, q_final, ref_wavecar_path
 
         # setup WSWQ calcs for excited structures
         wav_calc_path_i, wswq_calc_path_i = capture_initial_path / f'WAV_{disp_suffix}', capture_initial_path / f'WSWQ_{disp_suffix}'
-        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(wav_calc_path_i, wswq_calc_path_i, charge=q_initial, potcar=potcar, incar_settings=incar_settings)
+        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(wav_calc_path_i, charge=q_initial, potcar=potcar, incar_settings=incar_settings)
         vasp_wswq_inputs.write_input(wswq_calc_path_i, make_dir_if_not_present=True, files_to_transfer={'WAVECAR.qqq': wav_calc_path_i / 'WAVECAR'})
         shutil.copyfile(ref_wavecar_path, wswq_calc_path_i / 'WAVECAR')
 
         # setup WSWQ calcs for ground structures
         wav_calc_path_f, wswq_calc_path_f = capture_final_path / f'WAV_{disp_suffix}', capture_final_path / f'WSWQ_{disp_suffix}'
-        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(wav_calc_path_f, wswq_calc_path_f, charge=q_final, potcar=potcar, incar_settings=incar_settings)
+        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(wav_calc_path_f, charge=q_final, potcar=potcar, incar_settings=incar_settings)
         vasp_wswq_inputs.write_input(wswq_calc_path_f, make_dir_if_not_present=True, files_to_transfer={'WAVECAR.qqq': wav_calc_path_f / 'WAVECAR'})
         shutil.copyfile(ref_wavecar_path, wswq_calc_path_f / 'WAVECAR')
         
-    return
+    return None
 
 
 def setup_carrier_capture_perfect_ref(base_path=Path.cwd(), wswq_mid_path=Path('WSWQ_000'), potcar=None, incar_settings={}):
@@ -325,44 +324,108 @@ def setup_carrier_capture_perfect_ref(base_path=Path.cwd(), wswq_mid_path=Path('
     eig_ref_inputs = VaspInput(poscar=perfect_poscar, potcar=eig_ref_potcar, kpoints=wswq_kpoints, incar=eig_ref_incar)
     eig_ref_inputs.write_input(eig_ref_path, make_dir_if_not_present=True)
         
-    return
+    return None
 
 
-def gather_qe_data(defect_name, q_initial, q_final, cc_path=Path.cwd(), displacements=None, qe_filename='potential.csv'):
+def gather_qe_data(excited_poscar_path, ground_poscar_path, disp_path, displacements=None):
     """
     Gather Q vs. E data for configuration coordinate diagram generation assuming 1D potential energy surfaces.
+    """
+    # set default for displacements array corresponding to DISP calculations
+    displacements = np.array([-1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0]) if displacements is None else displacements
+
+    Q, E = [], []    
+    for i in range(displacements.shape[0]):
+        # assume displacements are organized as DISP_XXX (e.g., DISP_001 or DISP_-01)
+        disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
+        
+        # get excited & ground state structures
+        excited_poscar = Poscar.from_file(excited_poscar_path)
+        ground_poscar = Poscar.from_file(ground_poscar_path)
+        
+        # get intermediate structures and energy files
+        inter_poscar = Poscar.from_file(disp_path / f'DISP_{disp_suffix}' / 'CONTCAR')
+        oszi = Oszicar(disp_path / f'DISP_{disp_suffix}' / 'OSZICAR')
+        
+        Q.append(get_Q_from_struct(ground_poscar.structure, excited_poscar.structure, inter_poscar.structure))
+        E.append(oszi.final_energy)
+
+    # create dataframe for QE data
+    qe_df = pd.DataFrame({'Q': Q, 'E': E})
+
+    return qe_df
+
+
+def gather_qe_carrier_capture(defect_name, q_initial, q_final, cc_path=Path.cwd(), displacements=None, qe_filename='potential.csv'):
+    """
+    Gather Q vs. E data for carrier capture CCD.
     """
     capture_calc_path = cc_path / '_'.join([defect_name, str(q_initial), str(q_final)])
     charge_diff = q_final-q_initial
     capture_initial_path, capture_final_path = capture_calc_path / 'i_q', capture_calc_path / f'f_q{charge_diff:+}'
+
+    # gather Q vs. E data for initial and final states for carrier capture
+    excited_poscar_path = capture_initial_path / 'DISP_000' / 'CONTCAR'
+    ground_poscar_path = capture_final_path / 'DISP_000' / 'CONTCAR'
+    qe_i_df = gather_qe_data(excited_poscar_path, ground_poscar_path, capture_initial_path, displacements=displacements)
+    qe_f_df = gather_qe_data(excited_poscar_path, ground_poscar_path, capture_final_path, displacements=displacements)
     
-    # set default for displacements array corresponding to DISP calculations
-    displacements = np.array([-1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0]) if displacements is None else displacements
-
-    Qi, Qf, Ei, Ef = [], [], [], []    
-    for i in range(displacements.shape[0]):
-        disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
-        
-        # get excited & ground state structures
-        excited_poscar, ground_poscar = Poscar.from_file(capture_initial_path / 'DISP_000' / 'CONTCAR'), Poscar.from_file(capture_final_path / 'DISP_000' / 'CONTCAR')
-        # get intermediate structures and energy files
-        inter_poscar_i, inter_poscar_f = Poscar.from_file(capture_initial_path / f'DISP_{disp_suffix}' / 'CONTCAR'), Poscar.from_file(capture_final_path / f'DISP_{disp_suffix}' / 'CONTCAR')
-        oszi_i, oszi_f = Oszicar(capture_initial_path / f'DISP_{disp_suffix}' / 'OSZICAR'), Oszicar(capture_final_path / f'DISP_{disp_suffix}' / 'OSZICAR')
-        
-        Qi.append(get_Q_from_struct(ground_poscar.structure, excited_poscar.structure, inter_poscar_i.structure))
-        Qf.append(get_Q_from_struct(ground_poscar.structure, excited_poscar.structure, inter_poscar_f.structure))
-        Ei.append(oszi_i.final_energy)
-        Ef.append(oszi_f.final_energy)
-
-    # create dataframe for QE data
-    qe_i_df, qe_f_df = pd.DataFrame({'Q': Qi, 'E': Ei}), pd.DataFrame({'Q': Qf, 'E': Ef})
     qe_i_df.to_csv(capture_initial_path / qe_filename, index=False)
     qe_f_df.to_csv(capture_final_path / qe_filename, index=False)
 
     return qe_i_df, qe_f_df
 
 
-def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='final', g=1, m_e=0.2, m_h=0.8, dielectric_const=10., kpt_idx=0, spin=0, base_path=Path.cwd(), displacements=None, savefig=None):
+def gather_qe_migration(defect_name, q_ext, q_initial, q_final, mig_path=Path.cwd(), displacements=None, qe_filename='potential.csv'):
+    """
+    Gather Q vs. E data for carrier-capture-enhanced athermal migration.
+    """
+    mig_calc_path = mig_path / '_'.join([defect_name, str(q_ext), f'{q_initial}to{q_final}'])
+    capture_initial_path = mig_path / '_'.join([defect_name, str(q_initial), f'{q_initial}to{q_final}'])
+    capture_final_path = mig_path / '_'.join([defect_name, str(q_final), f'{q_initial}to{q_final}'])
+
+    # gather Q vs. E data for migration charge state
+    excited_poscar_path = capture_initial_path / 'DISP_000' / 'CONTCAR'
+    ground_poscar_path = capture_final_path / 'DISP_000' / 'CONTCAR'
+    qe_mig_df = gather_qe_data(excited_poscar_path, ground_poscar_path, mig_calc_path, displacements=displacements)
+    
+    qe_mig_df.to_csv(mig_calc_path / qe_filename, index=False)
+
+    return qe_mig_df
+
+
+def calculate_g_capture(degen_initial, degen_final):
+    """
+    Calculate capture pathway degeneracy from initial and final degeneracy dictionaries.
+    Dictionaries include orientational and spin degeneracies as well as multiplicity
+    of the defect site in the bulk cell.
+    """
+    g_initial = float(degen_initial['g_Orient'])
+    g_final = float(degen_final['g_Orient'])
+    g_cap = round(max((g_final/g_initial), 1.), 0)
+    g_cap *= float(degen_final['g_Spin'])
+    return g_cap
+
+
+def calculate_g_capture_e_and_h(q_1, q_2, degen_1, degen_2):
+    """
+    Calculate capture pathway degeneracies for hole and electron capture.
+    """
+    g_capture_dict = {'g_h': 1., 'g_e': 1.}
+    g_12 = calculate_g_capture(degen_1, degen_2)
+    g_21 = calculate_g_capture(degen_2, degen_1)
+
+    if q_1 > q_2:
+        g_capture_dict.update({'g_h': g_21, 'g_e': g_12})
+    elif q_1 < q_2:
+        g_capture_dict.update({'g_h': g_12, 'g_e': g_21})
+    else:
+        print('Charge states must be different from each other.')
+    
+    return g_capture_dict
+
+
+def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='final', g_e=1, g_h=1, m_e=0.2, m_h=0.8, dielectric_const=10., kpt_idx=0, spin=0, base_path=Path.cwd(), displacements=None, savefig=None):
     """
     Analyze defect calculations to gather parameters for carrier capture calculations.
     """
@@ -372,7 +435,9 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
         'defect': str(defect_name),
         'q_initial': int(q_initial),
         'q_final': int(q_final),
-        'coupling state': str(coupling_state)
+        'coupling state': str(coupling_state),
+        'kpoint': int(kpt_idx + 1),
+        'spin': int(spin)
     }
 
     # defect & carrier capture calculation paths
@@ -445,24 +510,24 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
     # calculate electron-phonon coupling matrix elements from WSWQ calculations
     i_struc, f_struc = Structure.from_file(defect_initial_path / 'CONTCAR'), Structure.from_file(defect_final_path / 'CONTCAR')
     i_WSWQs, f_WSWQs = [], []
-    fig_h, fig_e = plt.figure(figsize=(12, 5)), plt.figure(figsize=(12, 5))
+    fig_vbm, fig_cbm = plt.figure(figsize=(12, 5)), plt.figure(figsize=(12, 5))
     if coupling_state.lower() == 'final' or coupling_state.lower() == 'f' or coupling_state.lower() == 'ground':
         # path to initial vasprun
         ground_vr_path = capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'vasprun.xml'
         # adjust valence/conduction band indices by electron difference from perfect reference to coupling reference
         defect_eigenvals = Eigenval(capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL', separate_spins=True)
         nelect_diff = perfect_eigenvals.nelect - defect_eigenvals.nelect
-        valence_indices = [i - floor(nelect_diff/2) + 1 for i in valence_indices]
-        conduction_indices = [i - floor(nelect_diff/2) + 2 for i in conduction_indices]
+        valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
+        conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
         for d in capture_final_path.glob('WSWQ_*'):
             if str(d) in [f'{str(capture_final_path)}/WSWQ_{str(i).replace('.', ''):0>3}' for i in displacements]:
                 Q_struc = Structure.from_file(d / 'CONTCAR')
                 Q = get_Q_from_struct(f_struc, i_struc, Q_struc)
                 f_WSWQs.append((Q, d / 'WSWQ'))
         # wavefunction indexing for get_Wif_from_WSWQ is 1-based indexing, spin (0 - up, 1 - down), & kpoint defaults to first kpoint
-        f_Wifs_h = get_Wif_from_WSWQ(f_WSWQs, str(ground_vr_path), int(max(valence_indices)+1), valence_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_h)
-        f_Wifs_e = get_Wif_from_WSWQ(f_WSWQs, str(ground_vr_path), int(min(conduction_indices)-1), conduction_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_e)
-        Wif_h, Wif_e = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_h])), np.sqrt(np.mean([x[1]**2 for x in f_Wifs_e]))
+        f_Wifs_vbm = get_Wif_from_WSWQ(f_WSWQs, str(ground_vr_path), int(max(valence_indices)+1), valence_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_vbm)
+        f_Wifs_cbm = get_Wif_from_WSWQ(f_WSWQs, str(ground_vr_path), int(min(conduction_indices)-1), conduction_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_cbm)
+        Wif_vbm, Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_vbm])), np.sqrt(np.mean([x[1]**2 for x in f_Wifs_cbm]))
     elif coupling_state.lower() == 'initial' or coupling_state.lower() == 'i' or coupling_state.lower() == 'excited':
         # path to initial vasprun
         ground_vr_path = capture_initial_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'vasprun.xml'
@@ -477,9 +542,9 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
                 Q = get_Q_from_struct(f_struc, i_struc, Q_struc)
                 i_WSWQs.append((Q, d / 'WSWQ'))
         # wavefunction indexing for get_Wif_from_WSWQ is 1-based indexing, spin (0 - up, 1 - down), & kpoint defaults to first kpoint
-        i_Wifs_h = get_Wif_from_WSWQ(i_WSWQs, str(ground_vr_path), int(max(valence_indices)+1), valence_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_h)
-        i_Wifs_e = get_Wif_from_WSWQ(i_WSWQs, str(ground_vr_path), int(min(conduction_indices)-1), conduction_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_e)
-        Wif_h, Wif_e = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_h])), np.sqrt(np.mean([x[1]**2 for x in i_Wifs_e]))
+        i_Wifs_vbm = get_Wif_from_WSWQ(i_WSWQs, str(ground_vr_path), int(max(valence_indices)+1), valence_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_vbm)
+        i_Wifs_cbm = get_Wif_from_WSWQ(i_WSWQs, str(ground_vr_path), int(min(conduction_indices)-1), conduction_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_cbm)
+        Wif_vbm, Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_vbm])), np.sqrt(np.mean([x[1]**2 for x in i_Wifs_cbm]))
     else:
         raise ValueError('Please choose either the final/initial state for use in calculating the electron-phonon coupling matrix element.')
 
@@ -501,8 +566,33 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
     # calculate effective mass of the charge carrier
     m_h, m_e = m_h, m_e
 
-    # calculate configurational degeneracy of the defect
-    g = g
+    # calculate capture degeneracies of the defect
+    if g_e is None or g_h is None:
+        try:
+            degen_df = pd.read_csv(defect_path / 'degeneracies.csv')
+            degen_initial = degen_df.loc[(degen_df['Defect'] == defect_name) & (degen_df['q'] == q_initial)]
+            degen_final = degen_df.loc[(degen_df['Defect'] == defect_name) & (degen_df['q'] == q_final)]
+        
+            try:
+                degen_initial_dict = degen_initial.to_dict(orient='records')[0]
+                degen_final_dict = degen_final.to_dict(orient='records')[0]
+                g_cap_dict = calculate_g_capture_e_and_h(q_initial, q_final, degen_initial_dict, degen_final_dict)
+                g_e, g_h = g_cap_dict['g_e'], g_cap_dict['g_h']
+            except IndexError:
+                cc_dict.update({'g_e': None, 'g_h': None})
+                print('Defect transition not present in degeneracies.csv')
+            
+            if g_e.is_integer() == False:
+                print('Electron capture degeneracy not an integer.')
+            if g_h.is_integer() == False:
+                print('Hole capture degeneracy not an integer.')
+                
+            cc_dict.update({'g_e': int(g_e), 'g_h': int(g_h)})
+        except FileNotFoundError:
+            cc_dict.update({'g_e': None, 'g_h': None})
+            print('No degeneracies.csv file found in defect directory.')
+    else:
+        cc_dict.update({'g_e': int(g_e), 'g_h': int(g_h)})
 
     # add info to yaml dict
     cc_dict.update({
@@ -511,12 +601,11 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
         'Qmin': float(Qmin),
         'Qmax': float(Qmax),
         'Q0': float(Q0),
-        'g': int(g),
         'valence bands': str(valence_indices),
         'conduction bands': str(conduction_indices),
         'defect bands': str(defect_indices),
-        'Wif_h': float(Wif_h),
-        'Wif_e': float(Wif_e),
+        'Wif_vbm': float(Wif_vbm),
+        'Wif_cbm': float(Wif_cbm),
         'm_h': float(m_h),
         'm_e': float(m_e),
         'dielectric': float(dielectric_const)
@@ -526,3 +615,292 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
         yaml.dump(cc_dict, yaml_file)
     
     return cc_dict
+
+
+def capture_rate(
+    cap_coeff: float,
+    defect_conc: float,
+    carrier_conc: float
+) -> float:
+    """
+    Calculates the nonradiative capture rate for a given temperature from the nonradiative
+    capture coefficient, defect concentration, and carrier concentration.
+    
+    Args
+    ---------
+        cap_coeff (float):
+            Capture coefficient in units of (cm^3 s^-1).
+        defect_conc (float):
+            Defect concentration in units of (cm^-3).
+        carrier_conc (float):
+            Carrier density/concentration in units of (cm^-3).
+
+    Returns
+    ---------
+        Capture rate with units of (cm^-3 s^-1).
+    """
+    cap_rate = cap_coeff*defect_conc*carrier_conc
+    return cap_rate
+
+
+def partial_capture_rate(
+    cap_coeff: float,
+    carrier_conc: float
+) -> float:
+    """
+    Calculates the nonradiative capture rate for a given temperature from the nonradiative
+    capture coefficient and carrier concentration.
+    
+    Args
+    ---------
+        cap_coeff (float):
+            Capture coefficient in units of (cm^3 s^-1).
+        carrier_conc (float):
+            Carrier density/concentration in units of (cm^-3).
+
+    Returns
+    ---------
+        Partial capture rate with units of (s^-1).
+    """
+    partial_cap_rate = cap_coeff*carrier_conc
+    return partial_cap_rate
+
+
+def effective_band_dos(
+    T: float,
+    eff_mass: float = 1.,
+    mc: int = 1
+) -> float:
+    """
+    Calculates the temperature-dependent effective density of states for the valence/conduction band.
+    
+    Args
+    ---------
+        T (float):
+            Temperature in units of (K).
+        eff_mass (float):
+            Effective mass of the carrier in the associated band in units of rest electron mass.
+            Defaults to 1 (equal to electron rest mass).
+        mc (int):
+            Number of equivalent energy minima for the conduction band. Defaults to 1, should only
+            be specified for conduction band effective DOS.
+
+    Returns
+    ---------
+        Effective band density of states with units of (cm^-3).
+    """
+    PLANCK_EV = 4.135667696e-15  # eV s
+    BOLTZMANN_EV = 8.617333262e-5  # eV / K
+    ELECTRON_MASS_EV = 0.51099895069e6  # eV
+    LIGHT_SPEED_CM = 2.99792458e10  # cm / s
+
+    eff_dos = 2*mc*((2*np.pi*eff_mass*ELECTRON_MASS_EV*BOLTZMANN_EV*T)/((PLANCK_EV**2)*(LIGHT_SPEED_CM**2)))**(3/2)
+    
+    return eff_dos
+
+
+def emission_coeff(
+    T: float,
+    cap_coeff: float,
+    dE: float,
+    eff_mass: float = 1.,
+    mc: int = 1
+) -> float:
+    """
+    Calculates the carrier thermal emission coefficient as a function of temperature using the
+    capture coefficient and effective density of states for the valence/conduction band.
+    
+    Args
+    ---------
+        T (float):
+            Temperature in units of (K).
+        cap_coeff (float):
+            Capture coefficient in units of (cm^3 s^-1).
+        dE (float):
+            Thermodynamic transition level in units of (eV).
+        eff_mass (float):
+            Effective mass of the carrier in the associated band in units of rest electron mass.
+            Defaults to 1 (equal to electron rest mass).
+        mc (int):
+            Number of equivalent energy minima for the conduction band. Defaults to 1, should only
+            be specified for conduction band effective DOS.
+
+    Returns
+    ---------
+        Emission coefficient with units of (s^-1).
+    """
+    BOLTZMANN_EV = 8.617333262e-5  # eV / K
+
+    eff_dos = effective_band_dos(T, eff_mass=eff_mass, mc=mc)
+    emission_coeff = cap_coeff*eff_dos*np.exp(-dE/(BOLTZMANN_EV*T))
+    
+    return emission_coeff
+
+
+def emission_rate(
+    emission_coeff: float,
+    defect_conc: float
+) -> float:
+    """
+    Calculates the emission rate for a given temperature from the emission coefficient
+    and defect concentration.
+    
+    Args
+    ---------
+        emission_coeff (float):
+            Emission coefficient in units of (s^-1).
+        defect_conc (float):
+            Defect concentration in units of (cm^-3).
+
+    Returns
+    ---------
+        Emission rate with units of (cm^-3 s^-1).
+    """
+    emission_rate = emission_coeff*defect_conc
+    return emission_rate
+
+
+def emission_rate_factor(
+    T: float,
+    dE: float,
+    defect_conc: float,
+    eff_mass: float = 1.,
+    mc: int = 1
+) -> float:
+    """
+    Calculates the carrier thermal emission exponential factor times the defect concentration as a
+    function of temperature using the effective density of states for the valence/conduction band.
+    
+    Args
+    ---------
+        T (float):
+            Temperature in units of (K).
+        defect_conc (float):
+            Defect concentration in units of (cm^-3).
+        dE (float):
+            Thermodynamic transition level in units of (eV).
+        eff_mass (float):
+            Effective mass of the carrier in the associated band in units of rest electron mass.
+            Defaults to 1 (equal to electron rest mass).
+        mc (int):
+            Number of equivalent energy minima for the conduction band. Defaults to 1, should only
+            be specified for conduction band effective DOS.
+
+    Returns
+    ---------
+        Emission exponential factor times the defect concentration with units of (cm^-6).
+    """
+    BOLTZMANN_EV = 8.617333262e-5  # eV / K
+
+    eff_dos = effective_band_dos(T, eff_mass=eff_mass, mc=mc)
+    emission_exp_factor = eff_dos*np.exp(-dE/(BOLTZMANN_EV*T))
+    emission_rate_sans_coeff = emission_exp_factor*defect_conc
+    
+    return emission_rate_sans_coeff
+
+
+def calc_all_cap_rates(cap_coeff_csv, conc_csv, temp=300):
+    """
+    Calculates all nonradiative capture rates for a given temperature using DataFrames for
+    nonradiative capture coefficients and defect/carrier concentrations. DataFrames are made from
+    the paths to the CSV files for each type of data. Capture coefficients are made from radDefects
+    and defect/carrier concentrations are calculated and formatted using doped.
+    """
+    cap_coeff_df = pd.read_csv(cap_coeff_csv, index_col=0)
+    conc_df = pd.read_csv(conc_csv, index_col=0)
+    
+    cap_rate_df = cap_coeff_df.copy(deep=True)
+    cap_rate_df.rename(columns={'C_p': 'R_p', 'C_n': 'R_n'}, inplace=True)
+    
+    # select concentrations for specified temperature
+    conc_temp_df = conc_df.query(f'`Temperature (K)` == {temp}')
+
+    # remove defects that don't have both capture coefficient values and concentration values
+    doped_defects, coeff_defects = conc_temp_df.index, cap_coeff_df.index
+    simplified_defect_names = list(map(lambda x: re.sub(r'\d+', '', x), doped_defects))
+    coeff_doped_cross_dict = {}
+    
+    for i, defect in enumerate(simplified_defect_names):
+        if defect in coeff_defects:
+            coeff_doped_cross_dict.update({defect: doped_defects[i]})
+        else:
+            # need to change if defect matches more than one alt_defect (i.e., two site types for one defect)
+            for j, alt_defect in enumerate(coeff_defects):
+                if defect in alt_defect:
+                    coeff_doped_cross_dict.update({alt_defect: doped_defects[i]})
+
+    cap_rate_df = cap_rate_df.loc[coeff_doped_cross_dict.keys()]
+    hole_cap_rates, electron_cap_rates = cap_rate_df['R_p'].copy(deep=False), cap_rate_df['R_n'].copy(deep=False)
+
+    defect_tracking = []
+    for capture in cap_rate_df.iterrows():
+        capture_defect, capture_info = capture
+        if capture_defect not in defect_tracking:
+            if type(cap_rate_df.loc[capture_defect]['R_p']) == pd.Series:
+                hole_cap_rates.loc[capture_defect] = cap_rate_df.loc[capture_defect]['R_p'].apply(
+                    lambda x: capture_rate(
+                        x,
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Holes (cm^-3)']
+                    )
+                )
+                electron_cap_rates.loc[capture_defect] = cap_rate_df.loc[capture_defect]['R_n'].apply(
+                    lambda x: capture_rate(
+                        x,
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Electrons (cm^-3)']
+                    )
+                )
+            elif type(cap_rate_df.loc[capture_defect]['R_p']) == np.float64:
+                hole_cap_rates.loc[capture_defect] = pd.Series(cap_rate_df.loc[capture_defect]['R_p'], index=[capture_defect]).apply(
+                    lambda x: capture_rate(
+                        x,
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Holes (cm^-3)']
+                    )
+                )
+                electron_cap_rates.loc[capture_defect] = pd.Series(cap_rate_df.loc[capture_defect]['R_n'], index=[capture_defect]).apply(
+                    lambda x: capture_rate(
+                        x,
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Electrons (cm^-3)']
+                    )
+                )
+            defect_tracking.append(capture_defect)
+    
+    return cap_rate_df
+
+
+def estimate_transition_time(cap_coeff_path, q_i, q_f, defect_name, temp=300, p_conc=1e18, n_conc=1e18):
+    """
+    Use to estimate time it takes to go from q_i to q_f, assuming single charge transitions
+    """
+    cap_coeff_df = pd.read_csv(cap_coeff_path, index_col=0)
+    time = 0
+    
+    if q_i < q_f:  # hole capture
+        cap_type = 'p'
+        q_all = np.arange(q_i, q_f+1, 1)
+    elif q_i > q_f:  # electron capture
+        cap_type = 'n'
+        q_all = np.arange(q_i, q_f-1, -1)
+    else:
+        print('Neither hole or electron capture, q_i and q_f may be same.')
+
+    for i in range(q_all.shape[0]-1):
+        try:
+            cap_coeff = cap_coeff_df.loc[defect_name].query(f'q_i=={q_all[i]} & q_f=={q_all[i+1]}')[f'C_{cap_type}'].iloc[0]
+        except IndexError:
+            cap_coeff = cap_coeff_df.loc[defect_name].query(f'q_f=={q_all[i]} & q_i=={q_all[i+1]}')[f'C_{cap_type}'].iloc[0]
+        print(f'Capture coefficient ({cap_type}) for ({q_all[i]}/{q_all[i+1]}): {cap_coeff} cm^3/s')
+
+        if cap_type == 'p':
+            t_i = partial_capture_rate(cap_coeff, p_conc)**-1
+            print(f'Time for ({q_all[i]}/{q_all[i+1]}) transition @ p={p_conc}: {t_i} s')
+        elif cap_type == 'n':
+            t_i = partial_capture_rate(cap_coeff, n_conc)**-1
+            print(f'Time for ({q_all[i]}/{q_all[i+1]}) transition @ n={n_conc}: {t_i} s')
+
+        time += t_i
+    
+    return time
