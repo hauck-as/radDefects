@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Python module used to setup and analyze carrier capture calculations using VASP."""
+"""Python module to setup/analyze VASP carrier capture calculations."""
 import os
 from pathlib import Path
 import shutil
@@ -17,6 +17,8 @@ from pymatgen.core.structure import Structure
 from pymatgen.io.vasp.inputs import Poscar, Kpoints, Incar, Potcar, VaspInput
 from pymatgen.io.vasp.outputs import Eigenval, Oszicar
 from pymatgen.electronic_structure.core import Spin
+from numpy.typing import ArrayLike
+from pymatgen.util.typing import PathLike
 
 import pydefect
 from pydefect.analyzer.unitcell import Unitcell
@@ -27,15 +29,49 @@ from nonrad.scaling import sommerfeld_parameter, charged_supercell_scaling_VASP
 # import sumo.electronic_structure.effective_mass as sem
 
 
-def create_carrier_capture_disp_vasp_inputs(poscar_structure, charge, disp_factor, potcar=None, incar_settings={}):
+def create_carrier_capture_disp_vasp_inputs(
+    poscar_structure: Structure,
+    charge: int,
+    disp_factor: float,
+    potcar: Potcar | None = None,
+    kpt: Kpoints | None = None,
+    incar_settings: dict = {}
+) -> VaspInput:
     """
-    Create a set of VASP inputs for carrier capture displacement calculations.
+    Create a set of VASP inputs for carrier capture displacement
+    calculations.
+
+    Args
+    ---------
+        poscar_structure (Structure):
+            `pymatgen` Structure object corresponding to the displaced
+            structure.
+        charge (int):
+            Integer charge state for the defect.
+        disp_factor (float):
+            Fractional configurational displacement based on
+            interpolation between equilibrium structures.
+        potcar (Potcar):
+            `pymatgen` Potcar object. Defaults to None (Potcar made from
+            standard PBEv54 potentials).
+        kpt (Kpoints):
+            `pymatgen` Kpoints object. Defaults to None (Special k-point
+            at (0.5, 0.5, 0.5)).
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. IBRION, NSW, NELECT, NUPDOWN,
+            MAGMOM, and LWAVE are set within the function. Defaults to
+            no additional settings.
+
+    Returns
+    ---------
+        pymatgen.io.vasp.inputs.VaspInput set for displacement calcs.
     """
     # POSCAR file from displacement structure
     poscar = Poscar(poscar_structure)
     
-    # POTCAR file defaulting to standard PAW PBEv54 potentials without suffixes
-    potcar = Potcar(poscar.site_symbols, 'PBE_54') if potcar == None else potcar
+    # POTCAR file of standard PAW PBEv54 potentials without suffixes
+    potcar = Potcar(poscar.site_symbols, 'PBE_54') if potcar is None else potcar
     
     # get electron count from POSCAR/POTCAR
     nelect = 0
@@ -45,11 +81,103 @@ def create_carrier_capture_disp_vasp_inputs(poscar_structure, charge, disp_facto
                 nelect += int(j.nelectrons)*poscar.natoms[i]
     nelect -= charge
     
-    # single special kpoint
-    kpt_spec = Kpoints.gamma_automatic(shift=(0.5, 0.5, 0.5))
+    # single special k-point to improve energies over Gamma-point
+    kpt = Kpoints.gamma_automatic(shift=(0.5, 0.5, 0.5)) if kpt is None else kpt
     
-    # INCAR file for single-energy HSE calculation
+    # INCAR file for single-point energy calculation with charged defect
     incar_dict = {
+        # no update to atomic positions
+        'IBRION': -1,
+        'NSW': 0,
+        # electron counts from POSCAR/POTCAR
+        'NELECT': nelect,
+        'NUPDOWN': int(nelect%2),
+        # MAGMOM initial guess of 0.6 for all atoms
+        'MAGMOM': f'{poscar.structure.num_sites}*0.6',
+        # write WAVECAR around equilibrium configuration
+        'LWAVE': True if disp_factor <= 0.2 and disp_factor >= -0.2 else False,
+    }
+    incar_dict.update(incar_settings)
+    
+    incar = Incar(incar_dict)
+
+    disp_inps = VaspInput(
+        poscar=poscar,
+        potcar=potcar,
+        kpoints=kpt,
+        incar=incar
+    )
+    
+    return disp_inps
+
+
+def carriercapturejl_interpolate(
+    struct_i: Structure,
+    struct_f: Structure,
+    disp_range: ArrayLike = np.linspace(-1, 1, 11)
+) -> list[Structure]:
+    """
+    Interpolates pymatgen structures using the method defined in the
+    CarrierCapture.jl code gen_cc_struct.py script. Modified to match
+    I/O of nonrad.
+
+    Args
+    ---------
+        struct_i (Structure):
+            `pymatgen` Structure object corresponding to the initial
+            structure.
+        struct_f (Structure):
+            `pymatgen` Structure object corresponding to the final
+            structure.
+        disp_range (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the initial state and 1 corresponds to the equilibrium
+            structure of the final state. Defaults to -1.0 to 1.0 in
+            0.2 increments.
+
+    Returns
+    ---------
+        List of interpolated/extrapolated `pymatgen` Structure objects.
+    """
+    interpolated_structs = []
+    
+    # model code on CarrierCapture.jl gen_cc_struct.py script
+    # A. Alkauskas, Q. Yan, and C. G. Van de Walle, Phys. Rev. B 90, 27 (2014)
+    delta_R = struct_f.frac_coords - struct_i.frac_coords
+    delta_R = (delta_R + 0.5) % 1 - 0.5
+    
+    lattice = struct_i.lattice.matrix  #[None,:,:]
+    delta_R = np.dot(delta_R, lattice)
+    
+    masses = np.array([spc.atomic_mass for spc in struct_i.species])
+    delta_Q2 = masses[:,None] * delta_R ** 2
+    
+    for frac in disp_range:
+        disp = frac * delta_R
+        struct = Structure(
+            struct_i.lattice,
+            struct_i.species,
+            struct_i.cart_coords + disp,
+            coords_are_cartesian=True
+        )
+        interpolated_structs.append(struct)
+    
+    return interpolated_structs
+
+    
+def setup_carrier_capture_from_pydefect(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    displacements: ArrayLike = np.array([
+        -1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0
+    ]),
+    struct_gen_type: str = 'CarrierCapture.jl',
+    base_path: Path = Path.cwd(),
+    potcar: Potcar | None = None,
+    kpt: Kpoints | None = None,
+    incar_settings: dict = {
         'NCORE': 12,
         'LREAL': 'Auto',
         'EDIFF': 1e-05,
@@ -64,69 +192,71 @@ def create_carrier_capture_disp_vasp_inputs(poscar_structure, charge, disp_facto
         'SIGMA': 0.05,
         'SYMPREC': 0.001,
         'ISIF': 2,
-        'IBRION': -1,
         'NELM': 100,
-        'NSW': 0,
-        'NELECT': nelect,
-        'NUPDOWN': int(nelect%2),
         'ISPIN': 2,
-        'MAGMOM': f'{poscar.structure.num_sites}*0.6',
         'LASPH': True,
         'LMAXMIX': 4,
         'LORBIT': 10,
         'LCHARG': False,
-        'LWAVE': True if disp_factor <= 0.2 and disp_factor >= -0.2 else False,
         'LVTOT': False,
         'LVHAR': False
     }
-    incar_dict.update(incar_settings)
-    
-    incar = Incar(incar_dict)
-
-    disp_inps = VaspInput(poscar=poscar, potcar=potcar, kpoints=kpt_spec, incar=incar)
-    
-    return disp_inps
-
-
-def carriercapturejl_interpolate(struct_i, struct_f, disp_range=np.linspace(-1, 1, 11)):
+) -> Path:
     """
-    Interpolates pymatgen structures using the method defined in the CarrierCapture.jl code gen_cc_struct.py script.
-    Modified to match I/O of nonrad.
-    """
-    interpolated_structs = []
-    
-    # model code on CarrierCapture.jl gen_cc_struct.py script
-    # A. Alkauskas, Q. Yan, and C. G. Van de Walle, Physical Review B 90, 27 (2014)
-    delta_R = struct_f.frac_coords - struct_i.frac_coords
-    delta_R = (delta_R + 0.5) % 1 - 0.5
-    
-    lattice = struct_i.lattice.matrix #[None,:,:]
-    delta_R = np.dot(delta_R, lattice)
-    
-    masses = np.array([spc.atomic_mass for spc in struct_i.species])
-    delta_Q2 = masses[:,None] * delta_R ** 2
-    
-    for frac in disp_range:
-        disp = frac * delta_R
-        struct = Structure(struct_i.lattice, struct_i.species, \
-                           struct_i.cart_coords + disp, \
-                           coords_are_cartesian=True)
-        interpolated_structs.append(struct)
-    
-    return interpolated_structs
+    Setup carrier capture calculations from previous `pydefect`
+    calculations.
 
-    
-def setup_carrier_capture_from_pydefect(defect_name, q_initial, q_final, displacements=None, struct_gen_type='CarrierCapture.jl', base_path=Path.cwd()):
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -1.0 to 1.0 in
+            varying increments (finer near equilibrium).
+        struct_gen_type (str):
+            Method for generating displaced structures. Implemented
+            options are 'CarrierCapture.jl' and 'nonrad' for the
+            corresponding methods. Defaults to 'CarrierCapture.jl'.
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect and carrier_capture
+            subdirectories. Defaults to Path.cwd().
+        potcar (Potcar):
+            `pymatgen` Potcar object. Defaults to None (Potcar made from
+            standard PBEv54 potentials).
+        kpt (Kpoints):
+            `pymatgen` Kpoints object. Defaults to None (Special k-point
+            at (0.5, 0.5, 0.5)).
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. IBRION, NSW, NELECT, NUPDOWN,
+            MAGMOM, and LWAVE are set within the input creation
+            function. Defaults to additional settings used for an HSE
+            calc for GaN with spin-polarization.
+
+    Returns
+    ---------
+        Path object of the directory containing the displacement
+        calculations.
     """
-    Setup carrier capture calculations from previous pydefect calculations. 
-    """
-    defect_path, capture_path = base_path / 'defect', base_path / 'carrier_capture'
-    defect_initial_path, defect_final_path = defect_path / '_'.join([defect_name, str(q_initial)]), defect_path / '_'.join([defect_name, str(q_final)])
+    defect_path = base_path / 'defect'
+    capture_path = base_path / 'carrier_capture'
+    defect_initial_path = defect_path / '_'.join([defect_name, str(q_initial)])
+    defect_final_path = defect_path / '_'.join([defect_name, str(q_final)])
     capture_calc_path = capture_path / '_'.join([defect_name, str(q_initial), str(q_final)])
     capture_calc_path.mkdir(parents=True, exist_ok=True)
 
-    charge_diff = q_final-q_initial
-    capture_initial_path, capture_final_path = capture_calc_path / 'i_q', capture_calc_path / f'f_q{charge_diff:+}'
+    charge_diff = q_final - q_initial
+    capture_initial_path = capture_calc_path / 'i_q'
+    capture_final_path = capture_calc_path / f'f_q{charge_diff:+}'
     capture_initial_path.mkdir(parents=True, exist_ok=True)
     capture_final_path.mkdir(exist_ok=True)
     capture_disp_path = capture_calc_path / '_'.join([defect_name, 'DISPLACEMENT'])
@@ -135,19 +265,34 @@ def setup_carrier_capture_from_pydefect(defect_name, q_initial, q_final, displac
     shutil.copyfile(defect_initial_path / 'CONTCAR', capture_disp_path / 'POSCAR_i')
     shutil.copyfile(defect_final_path / 'CONTCAR', capture_disp_path / 'POSCAR_f')
 
-    excited_poscar, ground_poscar = Poscar.from_file(capture_disp_path / 'POSCAR_i'), Poscar.from_file(capture_disp_path / 'POSCAR_f')
+    excited_poscar = Poscar.from_file(capture_disp_path / 'POSCAR_i')
+    ground_poscar = Poscar.from_file(capture_disp_path / 'POSCAR_f')
     excited_struct, ground_struct = excited_poscar.structure, ground_poscar.structure
 
-    displacements = np.array([-1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0]) if displacements is None else displacements
     if struct_gen_type.lower()[0] == 'c':
-        ground = carriercapturejl_interpolate(ground_struct, excited_struct, disp_range=displacements)
-        excited = carriercapturejl_interpolate(excited_struct, ground_struct, disp_range=displacements)
+        ground = carriercapturejl_interpolate(
+            ground_struct,
+            excited_struct,
+            disp_range=displacements
+        )
+        excited = carriercapturejl_interpolate(
+            excited_struct,
+            ground_struct,
+            disp_range=displacements
+        )
     elif struct_gen_type.lower()[0] == 'n':
-        ground, excited = get_cc_structures(ground_struct, excited_struct, displacements, remove_zero=False)
+        ground, excited = get_cc_structures(
+            ground_struct,
+            excited_struct,
+            displacements,
+            remove_zero=False
+        )
     else:
-        raise ValueError('Please choose a valid method for generating displacement structures: CarrierCapture.jl or Nonrad')
+        raise ValueError('Please choose a valid method for generating displacement ' +
+                         'structures: CarrierCapture.jl or Nonrad')
 
-    disp_dir_i_path, disp_dir_f_path = capture_disp_path / 'disp_dir_i', capture_disp_path / 'disp_dir_f'
+    disp_dir_i_path = capture_disp_path / 'disp_dir_i'
+    disp_dir_f_path = capture_disp_path / 'disp_dir_f'
     disp_dir_f_path.mkdir(exist_ok=True)
     disp_dir_i_path.mkdir(exist_ok=True)
     
@@ -155,39 +300,83 @@ def setup_carrier_capture_from_pydefect(defect_name, q_initial, q_final, displac
         disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
         struct.to(filename=str(disp_dir_i_path / f'POSCAR_{disp_suffix}'), fmt='poscar')
         disp_calc_path = capture_initial_path / f'DISP_{disp_suffix}'
-        vasp_disp_inputs = create_carrier_capture_disp_vasp_inputs(struct, q_initial, displacements[i])
+        vasp_disp_inputs = create_carrier_capture_disp_vasp_inputs(
+            struct,
+            q_initial,
+            displacements[i],
+            potcar=potcar,
+            kpt=kpt,
+            incar_settings=incar_settings
+        )
         vasp_disp_inputs.write_input(disp_calc_path, make_dir_if_not_present=True)
     
     for i, struct in enumerate(ground):
         disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
         struct.to(filename=str(disp_dir_f_path / f'POSCAR_{disp_suffix}'), fmt='poscar')
         disp_calc_path = capture_final_path / f'DISP_{disp_suffix}'
-        vasp_disp_inputs = create_carrier_capture_disp_vasp_inputs(struct, q_final, displacements[i])
+        vasp_disp_inputs = create_carrier_capture_disp_vasp_inputs(
+            struct,
+            q_final,
+            displacements[i],
+            potcar=potcar,
+            kpt=kpt,
+            incar_settings=incar_settings
+        )
         vasp_disp_inputs.write_input(disp_calc_path, make_dir_if_not_present=True)
     
     return capture_calc_path
 
 
-def create_carrier_capture_wav_vasp_inputs(disp_dir, charge=0, potcar=None, incar_settings={}):
+def create_carrier_capture_wav_vasp_inputs(
+    disp_dir: PathLike,
+    charge: int = 0,
+    potcar: Potcar | None = None,
+    kpt: Kpoints | None = None,
+    incar_settings: dict = {}
+) -> VaspInput:
     """
-    Read in VASP inputs from carrier capture displacement calculations and create VASP inputs for WAVECAR calculations.
+    Read in VASP inputs from carrier capture displacement calculations
+    and create VASP inputs for WAVECAR calculations.
+
+    Args
+    ---------
+        disp_dir (PathLike):
+            Path to displacement calculation directory.
+        charge (int):
+            Integer charge state for the defect. Defaults to 0 (neutral).
+        potcar (Potcar):
+            `pymatgen` Potcar object. Defaults to None (Potcar made from
+            standard PBEv54 potentials).
+        kpt (Kpoints):
+            `pymatgen` Kpoints object. Defaults to None (Gamma-point
+            only).
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. NELECT and NUPDOWN are set within
+            the function and everything else is taken from the previous
+            displacement calc. Defaults to no additional settings.
+
+    Returns
+    ---------
+        pymatgen.io.vasp.inputs.VaspInput set for wavefunction calcs.
     """
     # input files from displacement structure
     disp_inps = VaspInput.from_directory(disp_dir)
+    poscar_disp = disp_inps.poscar
 
     # update POTCAR if specified
-    potcar = Potcar(disp_inps.poscar.site_symbols, 'PBE_54') if potcar == None else potcar
+    potcar = Potcar(poscar_disp.site_symbols, 'PBE_54') if potcar == None else potcar
 
     # get electron count from POSCAR/POTCAR
     nelect = 0
-    for i, ele in enumerate(disp_inps.poscar.site_symbols):
+    for i, ele in enumerate(poscar_disp.site_symbols):
         for j in potcar:
             if ele == j.element:
-                nelect += int(j.nelectrons)*disp_inps.poscar.natoms[i]
+                nelect += int(j.nelectrons)*poscar_disp.natoms[i]
     nelect -= charge
     
-    # use gamma point
-    kpt_gam = Kpoints.gamma_automatic()
+    # use gamma point (assume direct bandgap)
+    kpt = Kpoints.gamma_automatic() if kpt is None else kpt
     
     # update INCAR if specified, change NELECT based on POTCAR
     incar_dict = disp_inps.incar
@@ -199,53 +388,143 @@ def create_carrier_capture_wav_vasp_inputs(disp_dir, charge=0, potcar=None, inca
     incar = Incar(incar_dict)
 
     # create updated VASP input set with modified input files
-    wav_inps = VaspInput(poscar=disp_inps.poscar, potcar=potcar, kpoints=kpt_gam, incar=incar)
+    wav_inps = VaspInput(
+        poscar=poscar_disp,
+        potcar=potcar,
+        kpoints=kpt,
+        incar=incar
+    )
     
     return wav_inps
 
 
-def setup_carrier_capture_wav(defect_name, q_initial, q_final, cc_path=Path.cwd(), displacements=None, potcar=None, incar_settings={}):
+def setup_carrier_capture_wav(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    displacements: ArrayLike = np.array([
+        -0.2, -0.1, 0., 0.1, 0.2
+    ]),
+    cc_path: Path = Path.cwd(),
+    potcar: Potcar | None = None,
+    kpt: Kpoints | None = None,
+    incar_settings: dict = {}
+) -> None:
     """
-    Setup carrier capture WAVECAR calculations from displacement calculations.
+    Setup carrier capture WAVECAR calculations from displacement
+    calculations.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -0.2 to 0.2 in
+            0.1 increments (around final state equilibrium).
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        potcar (Potcar):
+            `pymatgen` Potcar object. Defaults to None (Potcar made from
+            standard PBEv54 potentials).
+        kpt (Kpoints):
+            `pymatgen` Kpoints object. Defaults to None (Gamma-point
+            only).
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. NELECT and NUPDOWN are set within
+            the function and everything else is taken from the previous
+            displacement calc. Defaults to no additional settings.
+
+    Returns
+    ---------
+        Nothing.
     """
     capture_calc_path = cc_path / '_'.join([defect_name, str(q_initial), str(q_final)])
-    charge_diff = q_final-q_initial
-    capture_initial_path, capture_final_path = capture_calc_path / 'i_q', capture_calc_path / f'f_q{charge_diff:+}'
-
-    displacements = np.array([-0.2, -0.1, 0., 0.1, 0.2]) if displacements is None else displacements
+    charge_diff = q_final - q_initial
+    capture_initial_path = capture_calc_path / 'i_q'
+    capture_final_path = capture_calc_path / f'f_q{charge_diff:+}'
 
     for i in range(displacements.shape[0]):
         disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
 
         # setup WAVECAR calcs for excited structures
-        disp_calc_path_i, wav_calc_path_i = capture_initial_path / f'DISP_{disp_suffix}', capture_initial_path / f'WAV_{disp_suffix}'
-        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(disp_calc_path_i, charge=q_initial, potcar=potcar, incar_settings=incar_settings)
+        disp_calc_path_i = capture_initial_path / f'DISP_{disp_suffix}'
+        wav_calc_path_i = capture_initial_path / f'WAV_{disp_suffix}'
+        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(
+            disp_calc_path_i,
+            charge=q_initial,
+            potcar=potcar,
+            kpt=kpt,
+            incar_settings=incar_settings
+        )
         vasp_wav_inputs.write_input(wav_calc_path_i, make_dir_if_not_present=True)
 
         # setup WAVECAR calcs for ground structures
-        disp_calc_path_f, wav_calc_path_f = capture_final_path / f'DISP_{disp_suffix}', capture_final_path / f'WAV_{disp_suffix}'
-        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(disp_calc_path_f, charge=q_final, potcar=potcar, incar_settings=incar_settings)
+        disp_calc_path_f = capture_final_path / f'DISP_{disp_suffix}'
+        wav_calc_path_f = capture_final_path / f'WAV_{disp_suffix}'
+        vasp_wav_inputs = create_carrier_capture_wav_vasp_inputs(
+            disp_calc_path_f,
+            charge=q_final,
+            potcar=potcar,
+            kpt=kpt,
+            incar_settings=incar_settings
+        )
         vasp_wav_inputs.write_input(wav_calc_path_f, make_dir_if_not_present=True)
         
     return None
 
 
-def create_carrier_capture_wswq_vasp_inputs(wav_dir, charge=0, potcar=None, incar_settings={}):
+def create_carrier_capture_wswq_vasp_inputs(
+    wav_dir: PathLike,
+    charge: int = 0,
+    potcar: Potcar | None = None,
+    incar_settings: dict = {}
+) -> VaspInput:
     """
-    Read in VASP inputs from carrier capture WAVECAR calculations and create VASP inputs for WSWQ calculations.
+    Read in VASP inputs from carrier capture WAVECAR calculations and
+    create VASP inputs for WSWQ calculations.
+
+    Args
+    ---------
+        wav_dir (PathLike):
+            Path to wavefunction calculation directory.
+        charge (int):
+            Integer charge state for the defect. Defaults to 0 (neutral).
+        potcar (Potcar):
+            `pymatgen` Potcar object. Defaults to None (same as
+            wavefunction calc).
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. ALGO, LWSWQ, NELECT, and NUPDOWN
+            are set within the function and everything else is taken
+            from the previous wavefunction calc. Defaults to no
+            additional settings.
+
+    Returns
+    ---------
+        pymatgen.io.vasp.inputs.VaspInput set for electron-phonon matrix
+        post-processing calcs.
     """
     # input files from displacement structure
     wav_inps = VaspInput.from_directory(wav_dir)
+    poscar_wav = wav_inps.poscar
 
     # update POTCAR if specified
     potcar = wav_inps.potcar if potcar == None else potcar
 
     # get electron count from POSCAR/POTCAR
     nelect = 0
-    for i, ele in enumerate(wav_inps.poscar.site_symbols):
+    for i, ele in enumerate(poscar_wav.site_symbols):
         for j in potcar:
             if ele == j.element:
-                nelect += int(j.nelectrons)*wav_inps.poscar.natoms[i]
+                nelect += int(j.nelectrons)*poscar_wav.natoms[i]
     nelect -= charge
     
     # update INCAR if specified, change NELECT based on POTCAR
@@ -260,42 +539,140 @@ def create_carrier_capture_wswq_vasp_inputs(wav_dir, charge=0, potcar=None, inca
     incar = Incar(incar_dict)
 
     # create updated VASP input set with modified input files
-    wswq_inps = VaspInput(poscar=wav_inps.poscar, potcar=potcar, kpoints=wav_inps.kpoints, incar=incar)
+    wswq_inps = VaspInput(
+        poscar=poscar_wav,
+        potcar=potcar,
+        kpoints=wav_inps.kpoints,
+        incar=incar
+    )
     
     return wswq_inps
 
 
-def setup_carrier_capture_wswq(defect_name, q_initial, q_final, ref_wavecar_path, cc_path=Path.cwd(), displacements=None, potcar=None, incar_settings={}):
+def setup_carrier_capture_wswq(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    ref_wavecar_path: PathLike,
+    cc_path: Path = Path.cwd(),
+    displacements: ArrayLike = np.array([
+        -0.2, -0.1, 0., 0.1, 0.2
+    ]),
+    potcar: Potcar | None = None,
+    incar_settings: dict = {}
+) -> None:
     """
     Setup carrier capture WSWQ calculations from WAVECAR calculations.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        ref_wavecar_path (PathLike):
+            Path to reference WAVECAR file.
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -0.2 to 0.2 in
+            0.1 increments (around final state equilibrium).
+        potcar (Potcar):
+            `pymatgen` Potcar object. Defaults to None (Potcar made from
+            standard PBEv54 potentials).
+        kpt (Kpoints):
+            `pymatgen` Kpoints object. Defaults to None (Gamma-point
+            only).
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. NELECT and NUPDOWN are set within
+            the function and everything else is taken from the previous
+            displacement calc. Defaults to no additional settings.
+
+    Returns
+    ---------
+        Nothing.
     """
     capture_calc_path = cc_path / '_'.join([defect_name, str(q_initial), str(q_final)])
-    charge_diff = q_final-q_initial
-    capture_initial_path, capture_final_path = capture_calc_path / 'i_q', capture_calc_path / f'f_q{charge_diff:+}'
-
-    displacements = np.array([-0.2, -0.1, 0., 0.1, 0.2]) if displacements is None else displacements
+    charge_diff = q_final - q_initial
+    capture_initial_path = capture_calc_path / 'i_q'
+    capture_final_path = capture_calc_path / f'f_q{charge_diff:+}'
 
     for i in range(displacements.shape[0]):
         disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
 
         # setup WSWQ calcs for excited structures
-        wav_calc_path_i, wswq_calc_path_i = capture_initial_path / f'WAV_{disp_suffix}', capture_initial_path / f'WSWQ_{disp_suffix}'
-        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(wav_calc_path_i, charge=q_initial, potcar=potcar, incar_settings=incar_settings)
-        vasp_wswq_inputs.write_input(wswq_calc_path_i, make_dir_if_not_present=True, files_to_transfer={'WAVECAR.qqq': wav_calc_path_i / 'WAVECAR'})
+        wav_calc_path_i = capture_initial_path / f'WAV_{disp_suffix}'
+        wswq_calc_path_i =capture_initial_path / f'WSWQ_{disp_suffix}'
+        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(
+            wav_calc_path_i,
+            charge=q_initial,
+            potcar=potcar,
+            incar_settings=incar_settings
+        )
+        vasp_wswq_inputs.write_input(
+            wswq_calc_path_i,
+            make_dir_if_not_present=True,
+            files_to_transfer={
+                'WAVECAR.qqq': wav_calc_path_i / 'WAVECAR'
+            }
+        )
         shutil.copyfile(ref_wavecar_path, wswq_calc_path_i / 'WAVECAR')
 
         # setup WSWQ calcs for ground structures
-        wav_calc_path_f, wswq_calc_path_f = capture_final_path / f'WAV_{disp_suffix}', capture_final_path / f'WSWQ_{disp_suffix}'
-        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(wav_calc_path_f, charge=q_final, potcar=potcar, incar_settings=incar_settings)
-        vasp_wswq_inputs.write_input(wswq_calc_path_f, make_dir_if_not_present=True, files_to_transfer={'WAVECAR.qqq': wav_calc_path_f / 'WAVECAR'})
+        wav_calc_path_f = capture_final_path / f'WAV_{disp_suffix}'
+        wswq_calc_path_f = capture_final_path / f'WSWQ_{disp_suffix}'
+        vasp_wswq_inputs = create_carrier_capture_wswq_vasp_inputs(
+            wav_calc_path_f,
+            charge=q_final,
+            potcar=potcar,
+            incar_settings=incar_settings
+        )
+        vasp_wswq_inputs.write_input(
+            wswq_calc_path_f,
+            make_dir_if_not_present=True,
+            files_to_transfer={
+                'WAVECAR.qqq': wav_calc_path_f / 'WAVECAR'
+            }
+        )
         shutil.copyfile(ref_wavecar_path, wswq_calc_path_f / 'WAVECAR')
         
     return None
 
 
-def setup_carrier_capture_perfect_ref(base_path=Path.cwd(), wswq_mid_path=Path('WSWQ_000'), potcar=None, incar_settings={}):
+def setup_carrier_capture_perfect_ref(
+    base_path: Path = Path.cwd(),
+    wswq_mid_path: Path = Path('WSWQ_000'),
+    incar_settings: dict = {}
+) -> None:
     """
     Setup carrier capture perfect eigenvalue reference calculation.
+    
+    Args
+    ---------
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect and carrier_capture
+            subdirectories. Defaults to Path.cwd().
+        wswq_mid_path (Path):
+            Relative path to subdirectory for the middle point of
+            electron-phonon coupling matrix calculations corresponding
+            to the reference configuration. Defaults to Path('WSWQ_000').
+        incar_settings (dict):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. IBRION and NSW are set within the
+            function and everything else is taken from the previous
+            displacement calc. Defaults to no additional settings.
+
+    Returns
+    ---------
+        Nothing.
     """
     perfect_path = base_path / 'defect' / 'perfect'
     eig_ref_path = perfect_path / 'WAV_ref'
@@ -303,7 +680,8 @@ def setup_carrier_capture_perfect_ref(base_path=Path.cwd(), wswq_mid_path=Path('
     perfect_poscar = Poscar.from_file(perfect_path / 'CONTCAR')
     wswq_potcar = Potcar.from_file(wswq_mid_path / 'POTCAR')
 
-    # match POTCAR from defect calculation, ensuring only elements present in the perfect POSCAR are included
+    # match POTCAR from defect calculation, ensuring only elements
+    # present in the perfect POSCAR are included
     potcar_spec = []
     for i, ele in enumerate(wswq_potcar.symbols):
         ele_symbol = ele.split('_')[0]
@@ -321,22 +699,52 @@ def setup_carrier_capture_perfect_ref(base_path=Path.cwd(), wswq_mid_path=Path('
     incar_dict.update(incar_settings)
     eig_ref_incar = Incar(incar_dict)
     
-    eig_ref_inputs = VaspInput(poscar=perfect_poscar, potcar=eig_ref_potcar, kpoints=wswq_kpoints, incar=eig_ref_incar)
+    eig_ref_inputs = VaspInput(
+        poscar=perfect_poscar,
+        potcar=eig_ref_potcar,
+        kpoints=wswq_kpoints,
+        incar=eig_ref_incar
+    )
     eig_ref_inputs.write_input(eig_ref_path, make_dir_if_not_present=True)
         
     return None
 
 
-def gather_qe_data(excited_poscar_path, ground_poscar_path, disp_path, displacements=None):
+def gather_qe_data(
+    excited_poscar_path: PathLike,
+    ground_poscar_path: PathLike,
+    disp_path: PathLike,
+    displacements: ArrayLike = np.array([
+        -1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0
+    ])
+) -> pd.DataFrame:
     """
-    Gather Q vs. E data for configuration coordinate diagram generation assuming 1D potential energy surfaces.
-    """
-    # set default for displacements array corresponding to DISP calculations
-    displacements = np.array([-1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0]) if displacements is None else displacements
+    Gather Q vs. E data for configuration coordinate diagram generation
+    assuming 1D potential energy surfaces.
 
+    Args
+    ---------
+        excited_poscar_path (PathLike):
+            Path to displacement calculation directory.
+        ground_poscar_path (PathLike):
+            Path to displacement calculation directory.
+        disp_path (PathLike):
+            Path to displacement calculation directory.
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -1.0 to 1.0 in
+            varying increments (finer near equilibrium).
+
+    Returns
+    ---------
+        DataFrame of Q vs. E data.
+    """
     Q, E = [], []    
     for i in range(displacements.shape[0]):
-        # assume displacements are organized as DISP_XXX (e.g., DISP_001 or DISP_-01)
+        # assume displacements are organized as DISP_XXX
+        # (e.g., DISP_001 or DISP_-01)
         disp_suffix = f'{str(displacements[i]).replace('.', ''):0>3}'
         
         # get excited & ground state structures
@@ -347,7 +755,13 @@ def gather_qe_data(excited_poscar_path, ground_poscar_path, disp_path, displacem
         inter_poscar = Poscar.from_file(disp_path / f'DISP_{disp_suffix}' / 'CONTCAR')
         oszi = Oszicar(disp_path / f'DISP_{disp_suffix}' / 'OSZICAR')
         
-        Q.append(get_Q_from_struct(ground_poscar.structure, excited_poscar.structure, inter_poscar.structure))
+        Q.append(
+            get_Q_from_struct(
+                ground_poscar.structure,
+                excited_poscar.structure,
+                inter_poscar.structure
+            )
+        )
         E.append(oszi.final_energy)
 
     # create dataframe for QE data
@@ -356,19 +770,63 @@ def gather_qe_data(excited_poscar_path, ground_poscar_path, disp_path, displacem
     return qe_df
 
 
-def gather_qe_carrier_capture(defect_name, q_initial, q_final, cc_path=Path.cwd(), displacements=None, qe_filename='potential.csv'):
+def gather_qe_carrier_capture(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    cc_path: Path = Path.cwd(),
+    displacements: ArrayLike = np.array([
+        -1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0
+    ]),
+    qe_filename: PathLike = 'potential.csv'
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Gather Q vs. E data for carrier capture CCD.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -1.0 to 1.0 in
+            varying increments (finer near equilibrium).
+        qe_filename (PathLike):
+            Filename for CSV files to save Q vs. E data as relative to
+            initial and final state carrier capture directories.
+
+    Returns
+    ---------
+        Tuple of DataFrames of Q vs. E data for initial and final states.
     """
     capture_calc_path = cc_path / '_'.join([defect_name, str(q_initial), str(q_final)])
-    charge_diff = q_final-q_initial
-    capture_initial_path, capture_final_path = capture_calc_path / 'i_q', capture_calc_path / f'f_q{charge_diff:+}'
+    charge_diff = q_final - q_initial
+    capture_initial_path = capture_calc_path / 'i_q'
+    capture_final_path = capture_calc_path / f'f_q{charge_diff:+}'
 
     # gather Q vs. E data for initial and final states for carrier capture
     excited_poscar_path = capture_initial_path / 'DISP_000' / 'CONTCAR'
     ground_poscar_path = capture_final_path / 'DISP_000' / 'CONTCAR'
-    qe_i_df = gather_qe_data(excited_poscar_path, ground_poscar_path, capture_initial_path, displacements=displacements)
-    qe_f_df = gather_qe_data(excited_poscar_path, ground_poscar_path, capture_final_path, displacements=displacements)
+    qe_i_df = gather_qe_data(
+        excited_poscar_path,
+        ground_poscar_path,
+        capture_initial_path,
+        displacements=displacements
+    )
+    qe_f_df = gather_qe_data(
+        excited_poscar_path,
+        ground_poscar_path,
+        capture_final_path,
+        displacements=displacements
+    )
     
     qe_i_df.to_csv(capture_initial_path / qe_filename, index=False)
     qe_f_df.to_csv(capture_final_path / qe_filename, index=False)
@@ -376,9 +834,46 @@ def gather_qe_carrier_capture(defect_name, q_initial, q_final, cc_path=Path.cwd(
     return qe_i_df, qe_f_df
 
 
-def gather_qe_migration(defect_name, q_ext, q_initial, q_final, mig_path=Path.cwd(), displacements=None, qe_filename='potential.csv'):
+def gather_qe_migration(
+    defect_name: str,
+    q_ext: int,
+    q_initial: int,
+    q_final: int,
+    mig_path: Path = Path.cwd(),
+    displacements: ArrayLike = np.array([
+        -1.0, -0.6, -0.4, -0.2, -0.1, 0., 0.1, 0.2, 0.4, 0.6, 1.0
+    ]),
+    qe_filename: PathLike = 'potential.csv'
+) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Gather Q vs. E data for carrier-capture-enhanced athermal migration.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_ext (int):
+            Extra charge state of defect considered for migration
+            pathway.
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        mig_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -1.0 to 1.0 in
+            varying increments (finer near equilibrium).
+        qe_filename (PathLike):
+            Filename for CSV files to save Q vs. E data as relative to
+            initial and final state carrier capture directories.
+
+    Returns
+    ---------
+        Tuple of DataFrames of Q vs. E data for initial and final states.
     """
     mig_calc_path = mig_path / '_'.join([defect_name, str(q_ext), f'{q_initial}to{q_final}'])
     capture_initial_path = mig_path / '_'.join([defect_name, str(q_initial), f'{q_initial}to{q_final}'])
@@ -387,18 +882,38 @@ def gather_qe_migration(defect_name, q_ext, q_initial, q_final, mig_path=Path.cw
     # gather Q vs. E data for migration charge state
     excited_poscar_path = capture_initial_path / 'DISP_000' / 'CONTCAR'
     ground_poscar_path = capture_final_path / 'DISP_000' / 'CONTCAR'
-    qe_mig_df = gather_qe_data(excited_poscar_path, ground_poscar_path, mig_calc_path, displacements=displacements)
+    qe_mig_df = gather_qe_data(
+        excited_poscar_path,
+        ground_poscar_path,
+        mig_calc_path,
+        displacements=displacements
+    )
     
     qe_mig_df.to_csv(mig_calc_path / qe_filename, index=False)
 
     return qe_mig_df
 
 
-def calculate_g_capture(degen_initial, degen_final):
+def calculate_g_capture(
+    degen_initial: dict,
+    degen_final: dict
+) -> float:
     """
-    Calculate capture pathway degeneracy from initial and final degeneracy dictionaries.
-    Dictionaries include orientational and spin degeneracies as well as multiplicity
-    of the defect site in the bulk cell.
+    Calculate capture pathway degeneracy from initial and final
+    degeneracy dictionaries. Dictionaries include orientational and
+    spin degeneracies as well as multiplicity of the defect site in the
+    bulk cell.
+    
+    Args
+    ---------
+        degen_initial (dict):
+            Dictionary of initial state degeneracy values.
+        degen_final (dict):
+            Dictionary of final state degeneracy values.
+
+    Returns
+    ---------
+        Float of capture pathway degeneracy.
     """
     g_initial = float(degen_initial['g_Orient'])
     g_final = float(degen_final['g_Orient'])
@@ -407,9 +922,33 @@ def calculate_g_capture(degen_initial, degen_final):
     return g_cap
 
 
-def calculate_g_capture_e_and_h(q_1, q_2, degen_1, degen_2):
+def calculate_g_capture_e_and_h(
+    q_1: int,
+    q_2: int,
+    degen_1: dict,
+    degen_2: dict
+) -> dict:
     """
-    Calculate capture pathway degeneracies for hole and electron capture.
+    Calculate capture pathway degeneracies for hole and electron
+    capture. Determines which state corresponds to hole vs. electron
+    capture based on charge states and assigns capture degeneracies
+    accordingly.
+    
+    Args
+    ---------
+        q_1 (int):
+            Charge state of state 1.
+        q_2 (int):
+            Charge state of state 2.
+        degen_1 (dict):
+            Dictionary of state 1 degeneracy values.
+        degen_2 (dict):
+            Dictionary of state 2 degeneracy values.
+
+    Returns
+    ---------
+        Dictionary of capture pathway degeneracies for hole and electron
+        capture.
     """
     g_capture_dict = {'g_h': 1., 'g_e': 1.}
     g_12 = calculate_g_capture(degen_1, degen_2)
@@ -425,9 +964,55 @@ def calculate_g_capture_e_and_h(q_1, q_2, degen_1, degen_2):
     return g_capture_dict
 
 
-def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='final', g_e=1, g_h=1, m_e=0.2, m_h=0.8, dielectric_const=10., kpt_idx=0, spin=0, base_path=Path.cwd(), displacements=None, savefig=None):
+def parse_carrier_capture_info(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    coupling_state: str = 'final',
+    g_e: float = 1,
+    g_h: float = 1,
+    m_e: float = 0.2,
+    m_h: float = 0.8,
+    dielectric_const: float = 10.,
+    kpt_idx: int = 0,
+    spin: int = 0,
+    base_path: Path = Path.cwd(),
+    displacements: ArrayLike = np.array([
+        -0.2, -0.1, 0., 0.1, 0.2
+    ]),
+    savefig: PathLike | None = None
+) -> dict:
     """
-    Analyze defect calculations to gather parameters for carrier capture calculations.
+    Analyze defect calculations to gather parameters for carrier capture
+    calculations.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to -0.2 to 0.2 in
+            0.1 increments (around final state equilibrium).
+        coupling_state (str):
+            Choose the reference coupling state. Implemented options are
+            'final' and 'initial'. Defaults to 'final'.
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect and carrier_capture
+            subdirectories. Defaults to Path.cwd().
+
+    Returns
+    ---------
+        Dictionary of capture pathway degeneracies for hole and electron
+        capture.
     """
     # initialize yaml with given information
     cc_yaml_filename = 'carrier_capture_params.yaml'
@@ -504,7 +1089,6 @@ def parse_carrier_capture_info(defect_name, q_initial, q_final, coupling_state='
             Qmax = max(dQ*float(j.name.split('_')[-1])/10., Qmax)
 
     # set default for displacements array corresponding to WSWQ calculations
-    displacements = np.array([-0.2, -0.1, 0., 0.1, 0.2]) if displacements is None else displacements
     Q0 = displacements[displacements.shape[0]//2]
     
     # calculate electron-phonon coupling matrix elements from WSWQ calculations
