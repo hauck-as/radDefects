@@ -994,20 +994,43 @@ def parse_carrier_capture_info(
             Initial charge state of defect.
         q_final (int):
             Final charge state of defect.
+        coupling_state (str):
+            Choose the reference coupling state. Implemented options are
+            'final' and 'initial'. Defaults to 'final'.
+        g_e (float):
+            Electron capture pathway degeneracy. Defaults to 1.
+        g_h (float):
+            Hole capture pathway degeneracy. Defaults to 1.
+        m_e (float):
+            Electron effective mass in units of free electron mass.
+            Defaults to 0.2.
+        m_h (float):
+            Hole effective mass in units of free electron mass.
+            Defaults to 0.8.
+        dielectric_const (float):
+            Static dielectric constant of the material. Defaults to 10.
+        kpt_idx (int):
+            k-point index used for electron-phonon coupling matrix
+            element calculation. Defaults to 0 (first k-point, should be
+            the Gamma-point for Gamma-centered k-point meshes).
+        spin (int):
+            Spin channel used for electron-phonon coupling matrix
+            element calculation. Defaults to 0 (spin-up).
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect and carrier_capture
+            subdirectories. Defaults to Path.cwd().
         displacements (ArrayLike):
             Array of fractional displacements between the initial and
             final structures. 0 corresponds to the equilibrium structure
             of the final state and 1 corresponds to the equilibrium
             structure of the initial state. Defaults to -0.2 to 0.2 in
             0.1 increments (around final state equilibrium).
-        coupling_state (str):
-            Choose the reference coupling state. Implemented options are
-            'final' and 'initial'. Defaults to 'final'.
-        base_path (Path):
-            Base path to be used for setting up the carrier capture
-            calculations. Should be the base directory for `pydefect`
-            subdirectories and contain the defect and carrier_capture
-            subdirectories. Defaults to Path.cwd().
+        savefig (PathLike):
+            Relative path to save figure of electron-phonon coupling
+            matrix element fitting. Defaults to None (no figure saved).
+            CURRENTLY WIP.
 
     Returns
     ---------
@@ -1026,19 +1049,25 @@ def parse_carrier_capture_info(
     }
 
     # defect & carrier capture calculation paths
-    defect_path, capture_path = base_path / 'defect', base_path / 'carrier_capture'
-    defect_initial_path, defect_final_path = defect_path / '_'.join([defect_name, str(q_initial)]), defect_path / '_'.join([defect_name, str(q_final)])
+    defect_path = base_path / 'defect'
+    capture_path = base_path / 'carrier_capture'
+    defect_initial_path = defect_path / '_'.join([defect_name, str(q_initial)])
+    defect_final_path = defect_path / '_'.join([defect_name, str(q_final)])
     capture_calc_path = capture_path / '_'.join([defect_name, str(q_initial), str(q_final)])
     
-    charge_diff = q_final-q_initial
-    capture_initial_path, capture_final_path = capture_calc_path / 'i_q', capture_calc_path / f'f_q{charge_diff:+}'
+    charge_diff = q_final - q_initial
+    capture_initial_path = capture_calc_path / 'i_q'
+    capture_final_path = capture_calc_path / f'f_q{charge_diff:+}'
 
-    # add charge transition level between q_i/q_f & VBM/CBM if transition_levels.json exists
+    # add charge transition level between q_i/q_f &
+    # VBM/CBM if transition_levels.json exists
     try:
         transition_levels = loadfn(defect_path / 'transition_levels.json')
         for tl in transition_levels.transition_levels:
             tl.fermi_levels.sort()
-            for name, charge, energy, fermi in zip_longest([tl.name], tl.charges, tl.energies, tl.fermi_levels, fillvalue=tl.name):
+            for name, charge, energy, fermi in zip_longest(
+                [tl.name], tl.charges, tl.energies, tl.fermi_levels, fillvalue=tl.name
+            ):
                 if name in defect_name and q_initial in charge and q_final in charge:
                     cc_dict.update({'formation energy': float(energy), 'ctl': float(fermi)})
         cc_dict.update({'vbm': float(0.), 'cbm': float(transition_levels.cbm)})
@@ -1046,40 +1075,69 @@ def parse_carrier_capture_info(
         cc_dict.update({'formation energy': None, 'ctl': None, 'vbm': None, 'cbm': None})
         print('No transition_levels.json file found in defect directory.')
 
-    # get VBM/CBM from EIGENVAL if not determined from transition_levels.json
+    # get VBM/CBM from EIGENVAL if not determined from CTL file
     # get band indices for degenerate valence band states
-    perfect_eigenvals = Eigenval(defect_path / 'perfect' / 'WAV_ref' / 'EIGENVAL', separate_spins=True)
-    # band properties are tuple of (band gap, cbm, vbm, is_band_gap_direct), each tuples of 2, with index 0 = spin-up & index 1 = spin-down
+    perfect_eigenvals = Eigenval(
+        defect_path / 'perfect' / 'WAV_ref' / 'EIGENVAL',
+        separate_spins=True
+    )
+    # band properties tuple is (band gap, cbm, vbm, is_band_gap_direct),
+    # each tuples of 2, with index 0 = spin-up & index 1 = spin-down
     band_props = perfect_eigenvals.eigenvalue_band_properties
     if cc_dict['vbm'] is None or cc_dict['cbm'] is None:
-        cc_dict.update({'vbm': float(band_props[2][0]), 'cbm': float(band_props[1][0]), 'Eg': float(band_props[0][0])})
+        cc_dict.update({
+            'vbm': float(band_props[2][0]),
+            'cbm': float(band_props[1][0]),
+            'Eg': float(band_props[0][0])
+        })
     else:
         cc_dict.update({'Eg': float(band_props[0][0])})
     valence_indices, conduction_indices, defect_indices = [], [], []
-    # eigenvalues are dict of {(spin): NDArray(shape=(nkpt, nbands, 2))}, kpoint index is 0-based
-    eig_occ_up, eig_occ_down = perfect_eigenvals.eigenvalues[Spin.up][kpt_idx], perfect_eigenvals.eigenvalues[Spin.down][kpt_idx]
-    vbm_bandidx_up, vbm_bandidx_down = np.where(np.isclose(eig_occ_up[:, 0], band_props[2][0], atol=0.0001)), np.where(np.isclose(eig_occ_down[:, 0], band_props[2][1], atol=0.0001))
+    # eigenvalues are dict of {(spin): NDArray(shape=(nkpt, nbands, 2))},
+    # kpoint index is 0-based
+    eig_occ_up = perfect_eigenvals.eigenvalues[Spin.up][kpt_idx]
+    eig_occ_down = perfect_eigenvals.eigenvalues[Spin.down][kpt_idx]
+    vbm_bandidx_up = np.where(np.isclose(eig_occ_up[:, 0], band_props[2][0], atol=0.0001))
+    vbm_bandidx_down = np.where(np.isclose(eig_occ_down[:, 0], band_props[2][1], atol=0.0001))
     if isclose(vbm_bandidx_up[0][0], vbm_bandidx_down[0][0], abs_tol=0.1):
         valence_indices.append(vbm_bandidx_up[0][0])
         for band_idx in range(vbm_bandidx_up[0][0]):
-            if isclose(eig_occ_up[:, 0][vbm_bandidx_up[0][0]], eig_occ_up[:, 0][band_idx], abs_tol=0.2):
+            if isclose(
+                eig_occ_up[:, 0][vbm_bandidx_up[0][0]],
+                eig_occ_up[:, 0][band_idx],
+                abs_tol=0.2
+            ):
                 valence_indices.append(band_idx)
-            elif isclose(eig_occ_down[:, 0][vbm_bandidx_down[0][0]], eig_occ_down[:, 0][band_idx], abs_tol=0.2):
+            elif isclose(
+                eig_occ_down[:, 0][vbm_bandidx_down[0][0]],
+                eig_occ_down[:, 0][band_idx],
+                abs_tol=0.2
+            ):
                 valence_indices.append(band_idx)
     valence_indices.sort()
 
-    cbm_bandidx_up, cbm_bandidx_down = np.where(np.isclose(eig_occ_up[:, 0], band_props[1][0], atol=0.0001)), np.where(np.isclose(eig_occ_down[:, 0], band_props[1][1], atol=0.0001))
+    cbm_bandidx_up = np.where(np.isclose(eig_occ_up[:, 0], band_props[1][0], atol=0.0001))
+    cbm_bandidx_down = np.where(np.isclose(eig_occ_down[:, 0], band_props[1][1], atol=0.0001))
     if isclose(cbm_bandidx_up[0][0], cbm_bandidx_down[0][0], abs_tol=0.1):
         conduction_indices.append(cbm_bandidx_up[0][0])
         for band_idx in range(cbm_bandidx_up[0][0]):
-            if isclose(eig_occ_up[:, 0][cbm_bandidx_up[0][0]], eig_occ_up[:, 0][band_idx], abs_tol=0.2):
+            if isclose(
+                eig_occ_up[:, 0][cbm_bandidx_up[0][0]],
+                eig_occ_up[:, 0][band_idx],
+                abs_tol=0.2
+            ):
                 conduction_indices.append(band_idx)
-            elif isclose(eig_occ_down[:, 0][cbm_bandidx_down[0][0]], eig_occ_down[:, 0][band_idx], abs_tol=0.2):
+            elif isclose(
+                eig_occ_down[:, 0][cbm_bandidx_down[0][0]],
+                eig_occ_down[:, 0][band_idx],
+                abs_tol=0.2
+            ):
                 conduction_indices.append(band_idx)
     conduction_indices.sort()
     
     # determine dQ from relaxed defect calculation structures
-    poscar_initial, poscar_final = Poscar.from_file(defect_initial_path / 'CONTCAR'), Poscar.from_file(defect_final_path / 'CONTCAR')
+    poscar_initial = Poscar.from_file(defect_initial_path / 'CONTCAR')
+    poscar_final = Poscar.from_file(defect_final_path / 'CONTCAR')
     dQ = get_dQ(poscar_initial.structure, poscar_final.structure)
     
     Qmin, Qmax = 0., 0.
@@ -1088,51 +1146,107 @@ def parse_carrier_capture_info(
             Qmin = min(dQ*float(j.name.split('_')[-1])/10., Qmin)
             Qmax = max(dQ*float(j.name.split('_')[-1])/10., Qmax)
 
-    # set default for displacements array corresponding to WSWQ calculations
+    # set default for displacements array corresponding to WSWQ calcs
     Q0 = displacements[displacements.shape[0]//2]
     
-    # calculate electron-phonon coupling matrix elements from WSWQ calculations
-    i_struc, f_struc = Structure.from_file(defect_initial_path / 'CONTCAR'), Structure.from_file(defect_final_path / 'CONTCAR')
+    # calculate electron-phonon coupling matrix elements from WSWQ calcs
+    i_struc = Structure.from_file(defect_initial_path / 'CONTCAR')
+    f_struc = Structure.from_file(defect_final_path / 'CONTCAR')
     i_WSWQs, f_WSWQs = [], []
     fig_vbm, fig_cbm = plt.figure(figsize=(12, 5)), plt.figure(figsize=(12, 5))
-    if coupling_state.lower() == 'final' or coupling_state.lower() == 'f' or coupling_state.lower() == 'ground':
+    
+    coupling_state_keystr = coupling_state.lower()[0]
+    # check if coupling state is final or ground
+    if coupling_state_keystr == 'f' or coupling_state_keystr == 'g':
         # path to initial vasprun
         ground_vr_path = capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'vasprun.xml'
-        # adjust valence/conduction band indices by electron difference from perfect reference to coupling reference
-        defect_eigenvals = Eigenval(capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL', separate_spins=True)
+        # adjust valence/conduction band indices by electron difference
+        # from perfect reference to coupling reference
+        defect_eigenvals = Eigenval(
+            capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL',
+            separate_spins=True
+        )
         nelect_diff = perfect_eigenvals.nelect - defect_eigenvals.nelect
         valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
         conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
         for d in capture_final_path.glob('WSWQ_*'):
-            if str(d) in [f'{str(capture_final_path)}/WSWQ_{str(i).replace('.', ''):0>3}' for i in displacements]:
+            if str(d) in [f'{str(capture_final_path)}/WSWQ_{str(i).replace('.', ''):0>3}' \
+                          for i in displacements]:
                 Q_struc = Structure.from_file(d / 'CONTCAR')
                 Q = get_Q_from_struct(f_struc, i_struc, Q_struc)
                 f_WSWQs.append((Q, d / 'WSWQ'))
-        # wavefunction indexing for get_Wif_from_WSWQ is 1-based indexing, spin (0 - up, 1 - down), & kpoint defaults to first kpoint
-        f_Wifs_vbm = get_Wif_from_WSWQ(f_WSWQs, str(ground_vr_path), int(max(valence_indices)+1), valence_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_vbm)
-        f_Wifs_cbm = get_Wif_from_WSWQ(f_WSWQs, str(ground_vr_path), int(min(conduction_indices)-1), conduction_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_cbm)
-        Wif_vbm, Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_vbm])), np.sqrt(np.mean([x[1]**2 for x in f_Wifs_cbm]))
-    elif coupling_state.lower() == 'initial' or coupling_state.lower() == 'i' or coupling_state.lower() == 'excited':
+        # wavefunction indexing for get_Wif_from_WSWQ is 1-based
+        # indexing, spin (0 - up, 1 - down), & kpoint defaults to first
+        f_Wifs_vbm = get_Wif_from_WSWQ(
+            f_WSWQs,
+            str(ground_vr_path),
+            int(max(valence_indices)+1),
+            valence_indices,
+            spin=spin,
+            kpoint=kpt_idx+1,
+            fig=fig_vbm
+        )
+        f_Wifs_cbm = get_Wif_from_WSWQ(
+            f_WSWQs,
+            str(ground_vr_path),
+            int(min(conduction_indices)-1),
+            conduction_indices,
+            spin=spin,
+            kpoint=kpt_idx+1,
+            fig=fig_cbm
+        )
+        Wif_vbm = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_vbm]))
+        Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_cbm]))
+    
+    # check if coupling state is initial or excited
+    elif coupling_state_keystr == 'i' or coupling_state_keystr == 'e':
         # path to initial vasprun
         ground_vr_path = capture_initial_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'vasprun.xml'
-        # adjust valence/conduction band indices by electron difference from perfect reference to coupling reference
-        defect_eigenvals = Eigenval(capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL', separate_spins=True)
+        # adjust valence/conduction band indices by electron difference
+        # from perfect reference to coupling reference
+        defect_eigenvals = Eigenval(
+            capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL',
+            separate_spins=True
+        )
         nelect_diff = perfect_eigenvals.nelect - defect_eigenvals.nelect
         valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
         conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
         for d in capture_initial_path.glob('WSWQ_*'):
-            if str(d) in [f'{str(capture_initial_path)}/WSWQ_{str(i).replace('.', ''):0>3}' for i in displacements]:
+            if str(d) in [f'{str(capture_initial_path)}/WSWQ_{str(i).replace('.', ''):0>3}' \
+                          for i in displacements]:
                 Q_struc = Structure.from_file(d / 'CONTCAR')
                 Q = get_Q_from_struct(f_struc, i_struc, Q_struc)
                 i_WSWQs.append((Q, d / 'WSWQ'))
-        # wavefunction indexing for get_Wif_from_WSWQ is 1-based indexing, spin (0 - up, 1 - down), & kpoint defaults to first kpoint
-        i_Wifs_vbm = get_Wif_from_WSWQ(i_WSWQs, str(ground_vr_path), int(max(valence_indices)+1), valence_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_vbm)
-        i_Wifs_cbm = get_Wif_from_WSWQ(i_WSWQs, str(ground_vr_path), int(min(conduction_indices)-1), conduction_indices, spin=spin, kpoint=kpt_idx+1, fig=fig_cbm)
-        Wif_vbm, Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_vbm])), np.sqrt(np.mean([x[1]**2 for x in i_Wifs_cbm]))
+        # wavefunction indexing for get_Wif_from_WSWQ is 1-based
+        # indexing, spin (0 - up, 1 - down), & kpoint defaults to first
+        i_Wifs_vbm = get_Wif_from_WSWQ(
+            i_WSWQs,
+            str(ground_vr_path),
+            int(max(valence_indices)+1),
+            valence_indices,
+            spin=spin,
+            kpoint=kpt_idx+1,
+            fig=fig_vbm
+        )
+        i_Wifs_cbm = get_Wif_from_WSWQ(
+            i_WSWQs,
+            str(ground_vr_path),
+            int(min(conduction_indices)-1),
+            conduction_indices,
+            spin=spin,
+            kpoint=kpt_idx+1,
+            fig=fig_cbm
+        )
+        Wif_vbm = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_vbm]))
+        Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_cbm]))
     else:
-        raise ValueError('Please choose either the final/initial state for use in calculating the electron-phonon coupling matrix element.')
+        raise ValueError(
+            'Please choose either the final/initial state for use in ' +
+            'calculating the electron-phonon coupling matrix element.'
+        )
 
-    # add band indices for defects considered in electron-phonon coupling matrix element calculations
+    # add band indices for defects considered in electron-phonon
+    # coupling matrix element calculations
     defect_indices.append(int(max(valence_indices)+1))
     if int(min(conduction_indices)-1) not in defect_indices:
         defect_indices.append(int(min(conduction_indices)-1))
@@ -1154,13 +1268,20 @@ def parse_carrier_capture_info(
     if g_e is None or g_h is None:
         try:
             degen_df = pd.read_csv(defect_path / 'degeneracies.csv')
-            degen_initial = degen_df.loc[(degen_df['Defect'] == defect_name) & (degen_df['q'] == q_initial)]
-            degen_final = degen_df.loc[(degen_df['Defect'] == defect_name) & (degen_df['q'] == q_final)]
+            degen_initial = degen_df.loc[(degen_df['Defect'] == defect_name) & \
+                                         (degen_df['q'] == q_initial)]
+            degen_final = degen_df.loc[(degen_df['Defect'] == defect_name) & \
+                                       (degen_df['q'] == q_final)]
         
             try:
                 degen_initial_dict = degen_initial.to_dict(orient='records')[0]
                 degen_final_dict = degen_final.to_dict(orient='records')[0]
-                g_cap_dict = calculate_g_capture_e_and_h(q_initial, q_final, degen_initial_dict, degen_final_dict)
+                g_cap_dict = calculate_g_capture_e_and_h(
+                    q_initial,
+                    q_final,
+                    degen_initial_dict,
+                    degen_final_dict
+                )
                 g_e, g_h = g_cap_dict['g_e'], g_cap_dict['g_h']
             except IndexError:
                 cc_dict.update({'g_e': None, 'g_h': None})
@@ -1207,8 +1328,9 @@ def capture_rate(
     carrier_conc: float
 ) -> float:
     """
-    Calculates the nonradiative capture rate for a given temperature from the nonradiative
-    capture coefficient, defect concentration, and carrier concentration.
+    Calculates the nonradiative capture rate for a given temperature
+    from the nonradiative capture coefficient, defect concentration,
+    and carrier concentration.
     
     Args
     ---------
@@ -1232,8 +1354,8 @@ def partial_capture_rate(
     carrier_conc: float
 ) -> float:
     """
-    Calculates the nonradiative capture rate for a given temperature from the nonradiative
-    capture coefficient and carrier concentration.
+    Calculates the nonradiative capture rate for a given temperature
+    from the nonradiative capture coefficient and carrier concentration.
     
     Args
     ---------
@@ -1256,18 +1378,21 @@ def effective_band_dos(
     mc: int = 1
 ) -> float:
     """
-    Calculates the temperature-dependent effective density of states for the valence/conduction band.
+    Calculates the temperature-dependent effective density of states for
+    the valence/conduction band.
     
     Args
     ---------
         T (float):
             Temperature in units of (K).
         eff_mass (float):
-            Effective mass of the carrier in the associated band in units of rest electron mass.
-            Defaults to 1 (equal to electron rest mass).
+            Effective mass of the carrier in the associated band in
+            units of rest electron mass. Defaults to 1 (equal to
+            electron rest mass).
         mc (int):
-            Number of equivalent energy minima for the conduction band. Defaults to 1, should only
-            be specified for conduction band effective DOS.
+            Number of equivalent energy minima for the conduction band.
+            Defaults to 1, should only be specified for conduction band
+            effective DOS.
 
     Returns
     ---------
@@ -1291,8 +1416,9 @@ def emission_coeff(
     mc: int = 1
 ) -> float:
     """
-    Calculates the carrier thermal emission coefficient as a function of temperature using the
-    capture coefficient and effective density of states for the valence/conduction band.
+    Calculates the carrier thermal emission coefficient as a function of
+    temperature using the capture coefficient and effective density of
+    states for the valence/conduction band.
     
     Args
     ---------
@@ -1303,11 +1429,13 @@ def emission_coeff(
         dE (float):
             Thermodynamic transition level in units of (eV).
         eff_mass (float):
-            Effective mass of the carrier in the associated band in units of rest electron mass.
-            Defaults to 1 (equal to electron rest mass).
+            Effective mass of the carrier in the associated band in
+            units of rest electron mass. Defaults to 1 (equal to
+            electron rest mass).
         mc (int):
-            Number of equivalent energy minima for the conduction band. Defaults to 1, should only
-            be specified for conduction band effective DOS.
+            Number of equivalent energy minima for the conduction band.
+            Defaults to 1, should only be specified for conduction band
+            effective DOS.
 
     Returns
     ---------
@@ -1326,8 +1454,8 @@ def emission_rate(
     defect_conc: float
 ) -> float:
     """
-    Calculates the emission rate for a given temperature from the emission coefficient
-    and defect concentration.
+    Calculates the emission rate for a given temperature from the
+    emission coefficient and defect concentration.
     
     Args
     ---------
@@ -1352,8 +1480,9 @@ def emission_rate_factor(
     mc: int = 1
 ) -> float:
     """
-    Calculates the carrier thermal emission exponential factor times the defect concentration as a
-    function of temperature using the effective density of states for the valence/conduction band.
+    Calculates the carrier thermal emission exponential factor times the
+    defect concentration as a function of temperature using the
+    effective density of states for the valence/conduction band.
     
     Args
     ---------
@@ -1364,15 +1493,18 @@ def emission_rate_factor(
         dE (float):
             Thermodynamic transition level in units of (eV).
         eff_mass (float):
-            Effective mass of the carrier in the associated band in units of rest electron mass.
-            Defaults to 1 (equal to electron rest mass).
+            Effective mass of the carrier in the associated band in
+            units of rest electron mass. Defaults to 1 (equal to
+            electron rest mass).
         mc (int):
-            Number of equivalent energy minima for the conduction band. Defaults to 1, should only
-            be specified for conduction band effective DOS.
+            Number of equivalent energy minima for the conduction band.
+            Defaults to 1, should only be specified for conduction band
+            effective DOS.
 
     Returns
     ---------
-        Emission exponential factor times the defect concentration with units of (cm^-6).
+        Emission exponential factor times the defect concentration with
+        units of (cm^-6).
     """
     BOLTZMANN_EV = 8.617333262e-5  # eV / K
 
@@ -1383,12 +1515,45 @@ def emission_rate_factor(
     return emission_rate_sans_coeff
 
 
-def calc_all_cap_rates(cap_coeff_csv, conc_csv, temp=300):
+def calc_all_cap_rates(
+    cap_coeff_csv: PathLike,
+    conc_csv: PathLike,
+    temp: float = 300,
+    def_conc_colname: str = 'Concentration (cm^-3)',
+    p_conc_colname: str = 'Holes (cm^-3)',
+    n_conc_colname: str = 'Electrons (cm^-3)'
+) -> pd.DataFrame:
     """
-    Calculates all nonradiative capture rates for a given temperature using DataFrames for
-    nonradiative capture coefficients and defect/carrier concentrations. DataFrames are made from
-    the paths to the CSV files for each type of data. Capture coefficients are made from radDefects
-    and defect/carrier concentrations are calculated and formatted using doped.
+    Calculates all nonradiative capture rates for a given temperature
+    using DataFrames for nonradiative capture coefficients and defect/
+    carrier concentrations. DataFrames are made from the paths to the
+    CSV files for each type of data. Capture coefficients are made from
+    `radDefects` and defect/carrier concentrations are calculated and
+    formatted using `doped`.
+    
+    Args
+    ---------
+        cap_coeff_csv (PathLike):
+            Path to CSV file containing nonradiative carrier capture
+            coefficients.
+        conc_csv (PathLike):
+            Path to CSV file containing defect and carrier
+            concentrations.
+        temp (float):
+            Temperature in units of (K).
+        def_conc_colname (str):
+            Column name for defect concentration in the concentration
+            CSV file. Defaults to 'Concentration (cm^-3)'.
+        p_conc_colname (str):
+            Column name for hole concentration in the concentration CSV
+            file. Defaults to 'Holes (cm^-3)'.
+        n_conc_colname (str):
+            Column name for electron concentrations in the concentration
+            CSV file. Defaults to 'Electrons (cm^-3)'.
+
+    Returns
+    ---------
+        DataFrame containing carrier capture rates.
     """
     cap_coeff_df = pd.read_csv(cap_coeff_csv, index_col=0)
     conc_df = pd.read_csv(conc_csv, index_col=0)
@@ -1399,7 +1564,8 @@ def calc_all_cap_rates(cap_coeff_csv, conc_csv, temp=300):
     # select concentrations for specified temperature
     conc_temp_df = conc_df.query(f'`Temperature (K)` == {temp}')
 
-    # remove defects that don't have both capture coefficient values and concentration values
+    # remove defects that don't have both capture coefficient values and
+    # concentration values
     doped_defects, coeff_defects = conc_temp_df.index, cap_coeff_df.index
     simplified_defect_names = list(map(lambda x: re.sub(r'\d+', '', x), doped_defects))
     coeff_doped_cross_dict = {}
@@ -1408,13 +1574,15 @@ def calc_all_cap_rates(cap_coeff_csv, conc_csv, temp=300):
         if defect in coeff_defects:
             coeff_doped_cross_dict.update({defect: doped_defects[i]})
         else:
-            # need to change if defect matches more than one alt_defect (i.e., two site types for one defect)
+            # need to change if defect matches more than one alt_defect
+            # (i.e., two site types for one defect)
             for j, alt_defect in enumerate(coeff_defects):
                 if defect in alt_defect:
                     coeff_doped_cross_dict.update({alt_defect: doped_defects[i]})
 
     cap_rate_df = cap_rate_df.loc[coeff_doped_cross_dict.keys()]
-    hole_cap_rates, electron_cap_rates = cap_rate_df['R_p'].copy(deep=False), cap_rate_df['R_n'].copy(deep=False)
+    hole_cap_rates = cap_rate_df['R_p'].copy(deep=False)
+    elec_cap_rates = cap_rate_df['R_n'].copy(deep=False)
 
     defect_tracking = []
     for capture in cap_rate_df.iterrows():
@@ -1424,30 +1592,36 @@ def calc_all_cap_rates(cap_coeff_csv, conc_csv, temp=300):
                 hole_cap_rates.loc[capture_defect] = cap_rate_df.loc[capture_defect]['R_p'].apply(
                     lambda x: capture_rate(
                         x,
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Holes (cm^-3)']
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][def_conc_colname],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][p_conc_colname]
                     )
                 )
-                electron_cap_rates.loc[capture_defect] = cap_rate_df.loc[capture_defect]['R_n'].apply(
+                elec_cap_rates.loc[capture_defect] = cap_rate_df.loc[capture_defect]['R_n'].apply(
                     lambda x: capture_rate(
                         x,
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Electrons (cm^-3)']
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][def_conc_colname],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][n_conc_colname]
                     )
                 )
             elif type(cap_rate_df.loc[capture_defect]['R_p']) == np.float64:
-                hole_cap_rates.loc[capture_defect] = pd.Series(cap_rate_df.loc[capture_defect]['R_p'], index=[capture_defect]).apply(
+                hole_cap_rates.loc[capture_defect] = pd.Series(
+                    cap_rate_df.loc[capture_defect]['R_p'],
+                    index=[capture_defect]
+                ).apply(
                     lambda x: capture_rate(
                         x,
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Holes (cm^-3)']
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][def_conc_colname],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][p_conc_colname]
                     )
                 )
-                electron_cap_rates.loc[capture_defect] = pd.Series(cap_rate_df.loc[capture_defect]['R_n'], index=[capture_defect]).apply(
+                elec_cap_rates.loc[capture_defect] = pd.Series(
+                    cap_rate_df.loc[capture_defect]['R_n'], 
+                    index=[capture_defect]
+                ).apply(
                     lambda x: capture_rate(
                         x,
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Concentration (cm^-3)'],
-                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]]['Electrons (cm^-3)']
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][def_conc_colname],
+                        conc_temp_df.loc[coeff_doped_cross_dict[capture_defect]][n_conc_colname]
                     )
                 )
             defect_tracking.append(capture_defect)
@@ -1455,9 +1629,39 @@ def calc_all_cap_rates(cap_coeff_csv, conc_csv, temp=300):
     return cap_rate_df
 
 
-def estimate_transition_time(cap_coeff_path, q_i, q_f, defect_name, temp=300, p_conc=1e18, n_conc=1e18):
+def estimate_transition_time(
+    cap_coeff_path: PathLike,
+    q_i: int,
+    q_f: int,
+    defect_name: str,
+    temp: float = 300,
+    p_conc: float = 1e18,
+    n_conc: float = 1e18
+) -> float:
     """
-    Use to estimate time it takes to go from q_i to q_f, assuming single charge transitions
+    Use to estimate time it takes to go from q_i to q_f, assuming single
+    charge transitions
+    
+    Args
+    ---------
+        cap_coeff_path (PathLike):
+            Path to carrier capture calculations directory.
+        q_i (int):
+            Initial charge state.
+        q_f (int):
+            Final charge state.
+        defect_name (str):
+            Defect name in defect_site# format (e.g., Va_N1).
+        temp (float):
+            Temperature in units of (K).
+        p_conc (float):
+            Hole concentration in units of (cm^-3).
+        n_conc (float):
+            Electron concentration in units of (cm^-3).
+
+    Returns
+    ---------
+        DataFrame containing carrier capture rates.
     """
     cap_coeff_df = pd.read_csv(cap_coeff_path, index_col=0)
     time = 0
@@ -1473,10 +1677,16 @@ def estimate_transition_time(cap_coeff_path, q_i, q_f, defect_name, temp=300, p_
 
     for i in range(q_all.shape[0]-1):
         try:
-            cap_coeff = cap_coeff_df.loc[defect_name].query(f'q_i=={q_all[i]} & q_f=={q_all[i+1]}')[f'C_{cap_type}'].iloc[0]
+            cap_coeff = cap_coeff_df.loc[defect_name].query(
+                f'q_i=={q_all[i]} & q_f=={q_all[i+1]}'
+            )[f'C_{cap_type}'].iloc[0]
         except IndexError:
-            cap_coeff = cap_coeff_df.loc[defect_name].query(f'q_f=={q_all[i]} & q_i=={q_all[i+1]}')[f'C_{cap_type}'].iloc[0]
-        print(f'Capture coefficient ({cap_type}) for ({q_all[i]}/{q_all[i+1]}): {cap_coeff} cm^3/s')
+            cap_coeff = cap_coeff_df.loc[defect_name].query(
+                f'q_f=={q_all[i]} & q_i=={q_all[i+1]}'
+            )[f'C_{cap_type}'].iloc[0]
+        print(
+            f'Capture coefficient ({cap_type}) for ({q_all[i]}/{q_all[i+1]}): {cap_coeff} cm^3/s'
+        )
 
         if cap_type == 'p':
             t_i = partial_capture_rate(cap_coeff, p_conc)**-1
