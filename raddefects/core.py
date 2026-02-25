@@ -36,10 +36,11 @@ def create_pydefect_file_structure(base_path=Path.cwd(), create_dirs=False):
         'dielectric': dielectric_path,
         'dos': dos_path,
         'structure_opt': structure_opt_path
-        }
+    }
 
     if create_dirs:
-        os.makedirs(list(pydefect_paths.values()))
+        for path in pydefect_paths.values():
+            os.makedirs(path, exist_ok=False)
 
     return pydefect_paths
 
