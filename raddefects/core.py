@@ -17,8 +17,36 @@ from mp_api.client import MPRester
 from pydefect.analyzer.band_edge_states import BandEdgeOrbitalInfos, PerfectBandEdgeState
 
 
-def create_pydefect_file_structure(base_path=Path.cwd(), create_dirs=False):
-    """Creates standard pydefect file structure under given base path."""
+def create_pydefect_file_structure(
+    base_path: Path = Path.cwd(),
+    add_carrier_capture: bool = False,
+    add_rad_defects: bool = False,
+    create_dirs: bool = False
+) -> dict:
+    """
+    Creates standard pydefect file structure under given base path.
+    
+    Args
+    ---------
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect and carrier_capture
+            subdirectories. Defaults to Path.cwd().
+        add_carrier_capture (bool):
+            Whether to add carrier capture subdirectories to the file
+            structure. Defaults to False.
+        add_rad_defects (bool):
+            Whether to add radiation defects subdirectories to the file
+            structure. Defaults to False.
+        create_dirs (bool):
+            Whether to create the directories if they do not exist.
+            Defaults to False.
+
+    Returns
+    ---------
+        Dictionary of defect calculations directories.
+    """
     cpd_path = base_path / 'cpd'
     defects_path = base_path / 'defect'
     unitcell_path = base_path / 'unitcell'
@@ -37,6 +65,14 @@ def create_pydefect_file_structure(base_path=Path.cwd(), create_dirs=False):
         'dos': dos_path,
         'structure_opt': structure_opt_path
     }
+
+    if add_carrier_capture:
+        cc_path = base_path / 'carrier_capture'
+        pydefect_paths['carrier_capture'] = cc_path
+    
+    if add_rad_defects:
+        rad_defects_path = base_path / 'rad_poscars'
+        pydefect_paths['rad_defects'] = rad_defects_path
 
     if create_dirs:
         for path in pydefect_paths.values():
