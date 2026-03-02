@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """Python module to setup/analyze VASP carrier capture calculations."""
 import os
 from pathlib import Path
