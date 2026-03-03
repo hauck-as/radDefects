@@ -354,6 +354,7 @@ def setup_defect_subcalcs(
                         vise_yaml = vy.read()
                     
                     vise_yaml = vise_yaml.replace('!MAGMOM', str(num_atoms))
+                    # ADD OTHER VARIABLE TAG REPLACEMENTS HERE
 
                     with open(subcalc_path / 'vise.yaml', 'w') as vy:
                         vy.write(vise_yaml)
