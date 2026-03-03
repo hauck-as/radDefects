@@ -3,18 +3,28 @@ from typing import TYPE_CHECKING, Optional
 
 import os
 from pathlib import Path
+import shutil
 import json
+import yaml
+from monty.serialization import dumpfn, loadfn
 
+import math
 import numpy as np
 import pandas as pd
 
+from pymatgen.core import Element, Structure, Lattice
+from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.vasp.sets import Poscar
 from pymatgen.io.vasp.outputs import Locpot
-from pymatgen.core import Structure, Lattice
-from pymatgen.symmetry.analyzer import *
+from pymatgen.analysis.defects.core import DefectComplex, Vacancy
 from mp_api.client import MPRester
+from vise.util.logger import get_logger
+from pydefect.input_maker.defect_set import DefectSet
+from pydefect.input_maker.supercell_info import SupercellInfo
 
 from pydefect.analyzer.band_edge_states import BandEdgeOrbitalInfos, PerfectBandEdgeState
+
+logger = get_logger(__name__)
 
 
 def create_pydefect_file_structure(
@@ -117,6 +127,287 @@ def get_mpid_from_supercell(perfect_poscar_path):
         else:
             raise UserWarning('Multiple matching structures were found.')
     return unitcell_info
+
+
+def change_initial_defect_config(defect_path, initial_path):
+    """
+    Given two paths with directories of defect calculations, use the initial path to replace the
+    atomic positions for the defect POSCARS in the defect path.
+    """
+    # read in lists of defects in both paths
+    initial_list, defect_list = [i.name for i in initial_path.glob('*_*_*/')], [i.name for i in defect_path.glob('*_*_*/')]
+    
+    for i in defect_list:
+        if i in initial_list:
+            shutil.copy(defect_path / i / 'POSCAR', defect_path / i / 'POSCAR0')
+            defect_pos, initial_pos = Poscar.from_file(defect_path / i / 'POSCAR'), Poscar.from_file(initial_path / i / 'CONTCAR')
+            defect_pos.structure.sites = initial_pos.structure.sites
+            defect_pos.write_file(defect_path / i / 'POSCAR')
+        elif i.split('_')[:2] in list(map(lambda x: x.split('_')[:2], initial_list)):
+            shutil.copy(defect_path / i / 'POSCAR', defect_path / i / 'POSCAR0')
+            # assume neutral charge for initial defect configuration
+            j = '_'.join(i.split('_')[:2]+['0'])
+            defect_pos, initial_pos = Poscar.from_file(defect_path / i / 'POSCAR'), Poscar.from_file(initial_path / j / 'CONTCAR')
+            defect_pos.structure.sites = initial_pos.structure.sites
+            defect_pos.write_file(defect_path / i / 'POSCAR')
+        else:
+            print('No alternate initial configuration found for', i)
+    
+    return None
+
+
+def create_vacancy_complex(vacs, base_path=Path.cwd(), vac_comp_ind=1):
+    """
+    Given a tuple of vacancy sites and the path to the perfect supercell POSCAR,
+    generates a defective supercell with a vacancy complex and adds initial charge
+    guesses to the rad_defect_in.yaml.
+    """
+    defects_path, rad_defects_path = base_path / 'defect', base_path / 'rad_poscars'
+    
+    perfect_poscar_path = defects_path / 'perfect' / 'POSCAR'
+    perfect_pos = Poscar.from_file(perfect_poscar_path)
+    
+    # create vacancy complex name
+    defect_name = '_'.join(['V'*len(vacs), ''.join(vacs)+str(vac_comp_ind)])
+    
+    # sum valence of each atom becoming vacancy and create charge list
+    tot_valence = sum([Element(i).valence[1] for i in vacs])
+    vac_complex_chgs = range(-tot_valence, tot_valence+1, 1)
+    
+    # try to add name: complex_charges to yaml
+    with open(defects_path / 'rad_defect_in.yaml', 'r') as rdy:
+        rad_defect_set = yaml.safe_load(rdy)
+
+        if defect_name not in rad_defect_set:
+            rad_defect_set.update({defect_name: list(vac_complex_chgs)})
+    
+    with open(defects_path / 'rad_defect_in.yaml', 'w') as rdy:
+        yaml.dump(rad_defect_set, rdy, default_flow_style=None)
+    
+    # copy perfect structure to add defect
+    defect_struc = perfect_pos.structure.copy()
+    
+    # create vacant nearest neighbor sites for complex
+    vac_site0 = defect_struc.sites[defect_struc.indices_from_symbol(vacs[0])[0]]
+    vac_list = [Vacancy(structure=defect_struc, site=vac_site0)]
+    vac0_neighbors = defect_struc.get_all_neighbors(r=1.1*len(vacs), sites=[vac_site0])[0]
+    
+    # find the closest neighbor that has the same site type as the next vacancy
+    for v in range(1, len(vacs)):
+        vac_site = vac0_neighbors[0]
+        for n in range(len(vac0_neighbors)):
+            if vacs[v] == vac0_neighbors[n].label:
+                if math.dist(vac_site0.coords, vac_site.coords) < math.dist(vac_site0.coords, vac0_neighbors[n].coords):
+                    vac_site = vac0_neighbors[n]
+        vac_list.append(Vacancy(structure=defect_struc, site=vac_site))
+    
+    vac_complex = DefectComplex(defects=[vac for vac in vac_list])
+    
+    vac_complex_pos = Poscar(vac_complex.defect_structure)
+    
+    try:
+        vac_complex_pos.write_file(rad_defects_path / ('POSCAR_' + defect_name))
+    except FileExistsError:
+        logger.info(f'POSCAR exists, so skipped...')
+    
+    return vac_complex
+
+
+# want to generate directories for complex defects, similar to pydefect_vasp de
+def make_rad_defect_entries(base_path=Path.cwd()):
+    """
+    based on make_defect_entries from pydefect
+    
+    what needs to happen
+    need to read defect type and charge from name
+    maybe set a directory for rad-induced defect POSCARs
+    create directory structure and copy poscar multiple times
+    convert poscar lattice constants to supercell?
+    """
+    supercell_info: SupercellInfo = loadfn(base_path / 'supercell_info.json')
+    perfect = Path(base_path / 'perfect')
+    
+    try:
+        perfect.mkdir()
+        logger.info("Making perfect dir...")
+        supercell_info.structure.to(filename=str(perfect / "POSCAR"))
+    except FileExistsError:
+        logger.info(f"perfect dir exists, so skipped...")
+    
+    rad_defect_set = DefectSet.from_yaml(base_path / 'rad_defect_in.yaml')
+    rad_defect_dir = base_path.parent / 'rad_poscars'
+    
+    for defect in rad_defect_set:
+        defect_poscar_title = 'POSCAR_' + defect.name
+        poscar_path = rad_defect_dir / defect_poscar_title
+
+        for i in range(len(defect.str_list)):
+            charge, def_chg_str = defect.charges[i], defect.str_list[i]
+            dir_path = base_path / def_chg_str
+            
+            try:
+                dir_path.mkdir()
+                logger.info(f"Making {dir_path} dir...")
+                
+                # copy POSCAR with defect from radiation damage simulation
+                shutil.copy(poscar_path, dir_path / 'POSCAR')
+                
+                # adjust lattice vectors to be the same as perfect structure
+                perfect_pos, defect_pos = Poscar.from_file(perfect / 'POSCAR'), Poscar.from_file(dir_path / 'POSCAR')
+
+                defect_pos.structure.lattice = perfect_pos.structure.lattice
+                defect_pos_adj = Poscar(defect_pos.structure)
+
+                defect_pos_adj.write_file(dir_path / 'POSCAR')
+
+                # create prior_info.yaml
+                prior_info = {'charge': charge}
+                with open(dir_path / 'prior_info.yaml', 'w') as piy:
+                    yaml.dump(prior_info, piy)
+                    
+                # make defect_entry.json
+                # defect_entry = make_defect_entry(name=defect.name, charge=charge, perfect_structure=perfect_pos.structure, defect_structure=defect_pos_adj.structure)
+                # defect_entry.to_json_file(filename=str(dir_path / "defect_entry.json"))
+                # defect_entry.to_prior_info(filename=str(dir_path / "prior_info.yaml"))
+            
+            except FileExistsError:
+                logger.info(f"{dir_path} dir exists, so skipped...")
+
+    return None
+
+
+def setup_defect_subcalcs(
+    subcalc_keys: str | list[str],
+    defect_path: Path = Path.cwd(),
+    defect_pattern: str = '*/'
+) -> None:
+    """
+    Creates defect subcalculation directories to relax defect structures
+    in stages. Can create multiple subcalculations based on
+    subcalc_keys.
+
+    Creates <subcalc_key> directories for each defect in the defect path
+    matching the defect pattern (e.g., '*_*_0/' corresponds to all
+    neutral defects), and copies vise_<subcalc_key>.yaml, POSCAR, and
+    any existing prior_info.yaml and defect_entry.json files to the new
+    subcalculation directories. Creates defect_entry.json if needed.
+    Modifies information in the vise.yaml files as needed (e.g.,
+    MAGMOM).
+    
+    Afterward, execute `vise vs -t defect` for each subdirectory.
+    Should do automatically in future.
+    2x2x2 Gamma-centered k-point mesh example
+    `vise vs -t defect -k 2.0 --uniform_kpt_mode --options
+        gamma_centered True only_even_num_kpts True`
+    
+    Args
+    ---------
+        subcalc_keys (str | list[str]):
+            Subcalculation key(s) to be used for setting up the defect
+            relaxation steps. Assumes the first (or only) key
+            corresponds to the first calculation stage. Keys should
+            correspond to the suffix of the vise_<subcalc_key>.yaml
+            files in the defect path. For example, if subcalc_keys is
+            ['kpt1', 'kpt2'], then the function will look for
+            vise_kpt1.yaml and vise_kpt2.yaml in the defect path to copy
+            to the new subcalculation directories. The POSCAR file will
+            be moved into the first stage directory.
+        defect_path (Path):
+            Defect directory for `pydefect`. Defaults to Path.cwd().
+        defect_pattern (str):
+            Pattern to match for defect directories in the defect path
+            using Path.glob. The directories matching the pattern must
+            have a POSCAR file. Defaults to '*/', which corresponds to
+            all defects and the perfect supercell relaxation.
+
+    Returns
+    ---------
+        Nothing.
+    """
+    # ensure subcalc_keys is a list
+    if type(subcalc_keys) == str:
+        subcalc_keys = [subcalc_keys]
+
+    # ensure defect_pattern ends with '/'
+    if not defect_pattern.endswith('/'):
+        defect_pattern += '/'
+    
+    defect_dirs = defect_path.glob(f'{defect_pattern}POSCAR')
+    for poscar_path in defect_dirs:
+        calc_path = poscar_path.parent
+        # ignore dotfile directories
+        if calc_path.name[0] != '.':
+            for k, subcalc in enumerate(subcalc_keys):
+                # create subcalc directories
+                subcalc_path = calc_path / subcalc
+                subcalc_path.mkdir()
+
+                # load POSCAR and get parameters for variable tags
+                defect_poscar = Poscar.from_file(poscar_path)
+
+                # get number of atoms for INCAR tags (e.g., MAGMOM)
+                num_atoms = defect_poscar.structure.num_sites
+
+                # copy vise.yaml files to subcalc directories
+                try:
+                    with open(defect_path / f'vise_{subcalc}.yaml', 'r') as vy:
+                        vise_yaml = vy.read()
+                    
+                    vise_yaml = vise_yaml.replace('!MAGMOM', str(num_atoms))
+
+                    with open(subcalc_path / 'vise.yaml', 'w') as vy:
+                        vy.write(vise_yaml)
+                except FileNotFoundError:
+                    logger.info(f'vise_{subcalc}.yaml not found, skipping')
+                    continue
+
+                # move POSCAR to first subcalc directory
+                if k == 0:
+                    shutil.move(
+                        poscar_path,
+                        subcalc_path / 'POSCAR'
+                    )
+
+                try:
+                    shutil.copy(
+                        calc_path / 'prior_info.yaml',
+                        subcalc_path / 'prior_info.yaml'
+                    )
+                except FileNotFoundError:
+                    logger.info(f'prior_info.yaml not found in {calc_path}, skipping')
+                    pass
+
+                try:
+                    shutil.copy(
+                        calc_path / 'defect_entry.json',
+                        subcalc_path / 'defect_entry.json'
+                    )
+                except FileNotFoundError:
+                    logger.info(f'defect_entry.json not found in {calc_path}, skipping')
+                    pass
+    
+    return None
+
+
+def update_defect_entry_pos(defect_entry, defect_pos_new, copy_filename=False):
+    """
+    Updates a pydefect defect_entry.json file with a new defect position.
+    """
+    # use to maintain a copy of original file under a new name
+    if type(copy_filename) == str:
+        shutil.copyfile(defect_entry, copy_filename)
+
+    # replace defect position in pydefect file
+    with open(defect_entry, 'r') as file_json:
+        defect_data = json.load(file_json)
+        defect_data['defect_center'] = defect_pos_new
+        defect_data_new = json.dumps(defect_data)
+
+    # create new defect_entry.json file
+    with open(defect_entry, 'w') as file_json:
+        file_json.write(defect_data_new)
+    
+    return defect_data
 
 
 # band edge orbital infos gives fermi level, states below should be occupied and above should be unoccupied
