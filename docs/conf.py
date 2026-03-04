@@ -14,8 +14,8 @@ project = 'radDefects'
 copyright = '2024, Alexander S. Hauck'
 author = 'Alexander S. Hauck'
 
-release = '1.1'
-version = '1.1.1'
+release = '1.2'
+version = '1.2.0'
 
 # -- General configuration
 
