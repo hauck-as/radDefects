@@ -175,11 +175,21 @@ def create_vacancy_complex(vacs, base_path=Path.cwd(), vac_comp_ind=1):
     vac_complex_chgs = range(-tot_valence, tot_valence+1, 1)
     
     # try to add name: complex_charges to yaml
-    with open(defects_path / 'rad_defect_in.yaml', 'r') as rdy:
-        rad_defect_set = yaml.safe_load(rdy)
+    try:
+        with open(defects_path / 'rad_defect_in.yaml', 'r') as rdy:
+            rad_defect_set = yaml.safe_load(rdy)
 
-        if defect_name not in rad_defect_set:
-            rad_defect_set.update({defect_name: list(vac_complex_chgs)})
+            try:
+                # add defect if it doesn't appear in yaml
+                if defect_name not in rad_defect_set:
+                    rad_defect_set.update({defect_name: list(vac_complex_chgs)})
+            except TypeError:
+                # if yaml file is empty create new dict
+                rad_defect_set = {defect_name: list(vac_complex_chgs)}
+            
+    except FileNotFoundError:
+        # create rad_defect_in.yaml if it doesn't exist
+        rad_defect_set = {defect_name: list(vac_complex_chgs)}
     
     with open(defects_path / 'rad_defect_in.yaml', 'w') as rdy:
         yaml.dump(rad_defect_set, rdy, default_flow_style=None)

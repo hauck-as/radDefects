@@ -9,7 +9,12 @@ radDefects WIP
 --------------
 * add verbose/debug option
 * improve documentation
-* fix site autodocs -> maybe have to refactor 
+* fix site autodocs -> maybe have to refactor
+
+-------
+core.py
+-------
+* change path definitions and POSCAR specification
 
 -----------------
 carriercapture.py
