@@ -381,8 +381,8 @@ def setup_defect_subcalcs(
                         continue
 
             shutil.copy(
-                cont_path,
-                prev_stage_dict[stages_dir] / 'POSCAR'
+                prev_stage_dict[stages_dir] / 'CONTCAR',
+                stages_dir / 'POSCAR'
             )
 
     for calc_path in defect_dirs:
