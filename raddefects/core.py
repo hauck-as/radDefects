@@ -14,7 +14,7 @@ import pandas as pd
 
 from pymatgen.core import Element, Structure, Lattice
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
-from pymatgen.io.vasp.sets import Poscar
+from pymatgen.io.vasp.inputs import Poscar, Potcar
 from pymatgen.io.vasp.outputs import Locpot
 from pymatgen.analysis.defects.core import DefectComplex, Vacancy
 from mp_api.client import MPRester
@@ -289,7 +289,9 @@ def make_rad_defect_entries(base_path=Path.cwd()):
 def setup_defect_subcalcs(
     subcalc_keys: str | list[str],
     defect_path: Path = Path.cwd(),
-    defect_pattern: str = '*/'
+    defect_pattern: str = '*/',
+    continue_from: str | None = None,
+    potcar: Potcar | None = None
 ) -> None:
     """
     Creates defect subcalculation directories to relax defect structures
@@ -327,8 +329,16 @@ def setup_defect_subcalcs(
         defect_pattern (str):
             Pattern to match for defect directories in the defect path
             using Path.glob. The directories matching the pattern must
-            have a POSCAR file. Defaults to '*/', which corresponds to
-            all defects and the perfect supercell relaxation.
+            have a POSCAR file if continue_from is None. Defaults to
+            '*/', which corresponds to all defects and the perfect
+            supercell relaxation.
+        continue_from (str | None):
+            Pattern and subcalc stage to continue from. Subcalc
+            directory needs to have a CONTCAR file.
+        potcar (Potcar | None):
+            Potcar object to be used for determining the number of
+            electrons for the defect structures. If None, defaults to
+            PBE_54 POTCARs from pymatgen. Defaults to None.
 
     Returns
     ---------
@@ -342,9 +352,43 @@ def setup_defect_subcalcs(
     if not defect_pattern.endswith('/'):
         defect_pattern += '/'
     
-    defect_dirs = defect_path.glob(f'{defect_pattern}POSCAR')
-    for poscar_path in defect_dirs:
-        calc_path = poscar_path.parent
+    defect_dirs = defect_path.glob(f'{defect_pattern}')
+    if continue_from is not None:
+        prev_dirs = defect_path.glob(f'{continue_from}CONTCAR')
+
+        # associate defect_dirs with prev_dirs
+        prev_stage_dict = {}
+        for cont_path in prev_dirs:
+            continue_from_dir, stages_dir = cont_path.parent, cont_path.parents[1]
+            if stages_dir in defect_dirs:
+                # if exact match found
+                prev_stage_dict.update({continue_from_dir: stages_dir})
+            else:
+                # try to find closest match if exact match not found
+                for stages_dir in defect_dirs:
+                    # defect type and site must match
+                    if continue_from_dir.name.split('_')[:2] == stages_dir.name.split('_')[:2]:
+                        # check if defect charge closer than current match if multiple matches found
+                        if continue_from_dir in prev_stage_dict:
+                            current_match_charge = int(prev_stage_dict[continue_from_dir].name.split('_')[-1])
+                            new_match_charge = int(stages_dir.name.split('_')[-1])
+                            target_charge = int(continue_from_dir.name.split('_')[-1])
+                            if abs(new_match_charge - target_charge) < abs(current_match_charge - target_charge):
+                                 prev_stage_dict.update({continue_from_dir: stages_dir})
+                        else:
+                            prev_stage_dict.update({continue_from_dir: stages_dir})
+                    else:
+                        logger.info(f'No previous stages for {stages_dir.name} to continue from')
+                        continue
+
+            shutil.copy(
+                cont_path,
+                prev_stage_dict[continue_from_dir] / 'POSCAR'
+            )
+
+    for calc_path in defect_dirs:
+        # need to change calc path if continue_from
+        poscar_path = calc_path / 'POSCAR'
         # ignore dotfile directories
         if calc_path.name[0] != '.':
             for k, subcalc in enumerate(subcalc_keys):
@@ -358,13 +402,29 @@ def setup_defect_subcalcs(
                 # get number of atoms for INCAR tags (e.g., MAGMOM)
                 num_atoms = defect_poscar.structure.num_sites
 
+                # get atom types
+                atom_types = defect_poscar.site_symbols
+
+                # default to PBE POTCAR, maybe base on x in vise.yaml
+                potcar = Potcar(atom_types, 'PBE_54') if potcar == None else potcar
+                charge = int(calc_path.name.split('_')[-1])
+
+                # get electron count from POSCAR/POTCAR
+                nelect = 0
+                for i, ele in enumerate(atom_types):
+                    for j in potcar:
+                        if ele == j.element:
+                            nelect += int(j.nelectrons)*defect_poscar.natoms[i]
+                nelect -= charge
+
                 # copy vise.yaml files to subcalc directories
                 try:
                     with open(defect_path / f'vise_{subcalc}.yaml', 'r') as vy:
                         vise_yaml = vy.read()
                     
                     vise_yaml = vise_yaml.replace('!MAGMOM', str(num_atoms))
-                    # ADD OTHER VARIABLE TAG REPLACEMENTS HERE
+                    vise_yaml = vise_yaml.replace('!NUPDOWN', str(int(nelect%2)))
+                    # add more variable tag replacements as needed
 
                     with open(subcalc_path / 'vise.yaml', 'w') as vy:
                         vy.write(vise_yaml)
