@@ -354,19 +354,18 @@ def setup_defect_subcalcs(
     
     defect_dirs = defect_path.glob(f'{defect_pattern}')
     if continue_from is not None:
-        prev_dirs = defect_path.glob(f'{continue_from}CONTCAR')
-
-        # associate defect_dirs with prev_dirs
+        cont_paths = defect_path.glob(f'{continue_from}CONTCAR')
+        prev_dirs = [p.parent for p in cont_paths]
         prev_stage_dict = {}
-        for cont_path in prev_dirs:
-            continue_from_dir, stages_dir = cont_path.parent, cont_path.parents[1]
-            if stages_dir in defect_dirs:
-                # if exact match found
-                prev_stage_dict.update({continue_from_dir: stages_dir})
+
+        # try to find closest match if exact match not found
+        for stages_dir in defect_dirs:
+            # if exact match found
+            if stages_dir in prev_dirs:
+                prev_stage_dict.update({stages_dir: stages_dir})
             else:
-                # try to find closest match if exact match not found
-                for stages_dir in defect_dirs:
-                    # defect type and site must match
+                for continue_from_dir in prev_dirs:
+                    # defect type and site must match at least
                     if continue_from_dir.name.split('_')[:2] == stages_dir.name.split('_')[:2]:
                         # check if defect charge closer than current match if multiple matches found
                         if continue_from_dir in prev_stage_dict:
@@ -374,16 +373,16 @@ def setup_defect_subcalcs(
                             new_match_charge = int(stages_dir.name.split('_')[-1])
                             target_charge = int(continue_from_dir.name.split('_')[-1])
                             if abs(new_match_charge - target_charge) < abs(current_match_charge - target_charge):
-                                 prev_stage_dict.update({continue_from_dir: stages_dir})
+                                    prev_stage_dict.update({stages_dir: continue_from_dir})
                         else:
-                            prev_stage_dict.update({continue_from_dir: stages_dir})
+                            prev_stage_dict.update({stages_dir: continue_from_dir})
                     else:
                         logger.info(f'No previous stages for {stages_dir.name} to continue from')
                         continue
 
             shutil.copy(
                 cont_path,
-                prev_stage_dict[continue_from_dir] / 'POSCAR'
+                prev_stage_dict[stages_dir] / 'POSCAR'
             )
 
     for calc_path in defect_dirs:
