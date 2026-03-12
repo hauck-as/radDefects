@@ -15,6 +15,7 @@ radDefects WIP
 core.py
 -------
 * change path definitions and POSCAR specification
+* setup_defect_subcalcs: enable continue from perfect
 
 -----------------
 carriercapture.py
