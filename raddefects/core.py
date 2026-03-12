@@ -357,10 +357,8 @@ def setup_defect_subcalcs(
         continue_from += '/'
     
     defect_dirs = defect_path.glob(f'{defect_pattern}')
-    print('defect_dirs', [_ for _ in defect_dirs], sep='\n')
     if continue_from is not None:
         cont_paths = defect_path.glob(f'{continue_from}CONTCAR')
-        print('cont_paths', [_ for _ in cont_paths], sep='\n')
         prev_dirs = [p.parent for p in cont_paths]
         print('prev_dirs', prev_dirs, sep='\n')
         prev_stage_dict = {}
