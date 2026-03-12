@@ -351,11 +351,18 @@ def setup_defect_subcalcs(
     # ensure defect_pattern ends with '/'
     if not defect_pattern.endswith('/'):
         defect_pattern += '/'
+
+    # ensure defect_pattern ends with '/'
+    if not continue_from.endswith('/'):
+        continue_from += '/'
     
     defect_dirs = defect_path.glob(f'{defect_pattern}')
+    print('defect_dirs', defect_dirs, sep='\n')
     if continue_from is not None:
         cont_paths = defect_path.glob(f'{continue_from}CONTCAR')
+        print('cont_paths', cont_paths, sep='\n')
         prev_dirs = [p.parent for p in cont_paths]
+        print('prev_dirs', prev_dirs, sep='\n')
         prev_stage_dict = {}
 
         # try to find closest match if exact match not found
@@ -363,20 +370,29 @@ def setup_defect_subcalcs(
             # if exact match found
             if stages_dir in prev_dirs:
                 prev_stage_dict.update({stages_dir: stages_dir})
+                print('prev_stage_dict', prev_stage_dict, sep='\n')
             else:
                 for continue_from_dir in prev_dirs:
                     # defect type and site must match at least
+                    print('continue_from_dir split', continue_from_dir.name.split('_'), sep='\n')
+                    print('stages_dir split', stages_dir.name.split('_'), sep='\n')
                     if continue_from_dir.name.split('_')[:2] == stages_dir.name.split('_')[:2]:
                         # check if defect charge closer than current match if multiple matches found
                         if continue_from_dir in prev_stage_dict:
                             current_match_charge = int(prev_stage_dict[continue_from_dir].name.split('_')[-1])
                             new_match_charge = int(stages_dir.name.split('_')[-1])
                             target_charge = int(continue_from_dir.name.split('_')[-1])
+                            print('current_match_charge', current_match_charge, sep='\n')
+                            print('new_match_charge', new_match_charge, sep='\n')
+                            print('target_charge', target_charge, sep='\n')
                             if abs(new_match_charge - target_charge) < abs(current_match_charge - target_charge):
                                     prev_stage_dict.update({stages_dir: continue_from_dir})
+                                    print('prev_stage_dict', prev_stage_dict, sep='\n')
                         else:
                             prev_stage_dict.update({stages_dir: continue_from_dir})
+                            print('prev_stage_dict', prev_stage_dict, sep='\n')
                     else:
+                        print('splits dont match')
                         logger.info(f'No previous stages for {stages_dir.name} to continue from')
                         continue
 
