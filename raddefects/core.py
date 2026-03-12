@@ -357,10 +357,10 @@ def setup_defect_subcalcs(
         continue_from += '/'
     
     defect_dirs = defect_path.glob(f'{defect_pattern}')
-    print('defect_dirs', defect_dirs, sep='\n')
+    print('defect_dirs', [_ for _ in defect_dirs], sep='\n')
     if continue_from is not None:
         cont_paths = defect_path.glob(f'{continue_from}CONTCAR')
-        print('cont_paths', cont_paths, sep='\n')
+        print('cont_paths', [_ for _ in cont_paths], sep='\n')
         prev_dirs = [p.parent for p in cont_paths]
         print('prev_dirs', prev_dirs, sep='\n')
         prev_stage_dict = {}
@@ -374,14 +374,16 @@ def setup_defect_subcalcs(
             else:
                 for continue_from_dir in prev_dirs:
                     # defect type and site must match at least
-                    print('continue_from_dir split', continue_from_dir.name.split('_'), sep='\n')
-                    print('stages_dir split', stages_dir.name.split('_'), sep='\n')
-                    if continue_from_dir.name.split('_')[:2] == stages_dir.name.split('_')[:2]:
+                    prev_defect, next_defect = continue_from_dir.parent.name, stages_dir.name
+                    print('continue_from_dir split', prev_defect.split('_'), sep='\n')
+                    print('stages_dir split', next_defect.split('_'), sep='\n')
+                    if prev_defect.split('_')[:2] == next_defect.split('_')[:2]:
                         # check if defect charge closer than current match if multiple matches found
                         if continue_from_dir in prev_stage_dict:
-                            current_match_charge = int(prev_stage_dict[continue_from_dir].name.split('_')[-1])
-                            new_match_charge = int(stages_dir.name.split('_')[-1])
-                            target_charge = int(continue_from_dir.name.split('_')[-1])
+                            current_defect = prev_stage_dict[continue_from_dir].name
+                            current_match_charge = int(current_defect.split('_')[-1])
+                            new_match_charge = int(next_defect.split('_')[-1])
+                            target_charge = int(prev_defect.split('_')[-1])
                             print('current_match_charge', current_match_charge, sep='\n')
                             print('new_match_charge', new_match_charge, sep='\n')
                             print('target_charge', target_charge, sep='\n')
