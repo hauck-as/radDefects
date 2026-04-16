@@ -1,9 +1,16 @@
 """Python module used to setup and analyze carrier capture calculations using VASP."""
 from pathlib import Path
-from typing import Any, Union
+from typing import TYPE_CHECKING, Optional, Any, Union
+from numpy.typing import ArrayLike
+from pymatgen.util.typing import PathLike
 import io
+import re
 from string import ascii_lowercase as alc
 import importlib.resources as ilr
+
+import random as rand
+import numpy as np
+import pandas as pd
 
 import matplotlib as mpl
 import matplotlib.pyplot as plt
@@ -18,11 +25,7 @@ from pypdf.annotations import FreeText
 from contextlib import contextmanager
 from fpdf import FPDF, get_scale_factor
 
-import random as rand
-import numpy as np
-import pandas as pd
-from pymatgen.util.typing import PathLike
-
+from pydefect.analyzer.transition_levels import TransitionLevels
 from raddefects.carriercapture import calc_all_cap_rates
 
 # interpolation and plotting functions
@@ -62,13 +65,13 @@ pl_paper_theme.layout.xaxis.minor.ticks = 'inside'
 pl_paper_theme.layout.yaxis.minor.ticks = 'inside'
 pl_paper_theme.layout.xaxis.mirror = 'ticks'  # True | "ticks" | False | "all" | "allticks"
 pl_paper_theme.layout.yaxis.mirror = 'ticks'  # True | "ticks" | False | "all" | "allticks"
-pl_paper_theme.layout.font.size = 24
+pl_paper_theme.layout.font.size = 32
 # pl_paper_theme.layout.xaxis.title.standoff = 20
-pl_paper_theme.layout.xaxis.title.font.size = 28
-pl_paper_theme.layout.xaxis.tickfont.size = 24
+pl_paper_theme.layout.xaxis.title.font.size = 44
+pl_paper_theme.layout.xaxis.tickfont.size = 36
 # pl_paper_theme.layout.yaxis.title.standoff = 24
-pl_paper_theme.layout.yaxis.title.font.size = 28
-pl_paper_theme.layout.yaxis.tickfont.size = 24
+pl_paper_theme.layout.yaxis.title.font.size = 44
+pl_paper_theme.layout.yaxis.tickfont.size = 36
 # pl_paper_theme.layout.coloraxis.colorbar.title.standoff = 20
 pio.templates.default = pl_paper_theme
 
@@ -363,6 +366,390 @@ def plot_plnr_avg_abc(plot_data, title=None, ax=None, style_file=None):
             title=axis_label_dict[direction]
         )
     return
+
+
+def generate_transition_level_diagram(
+    transition_levels: TransitionLevels,
+    skip_defects: list = [],
+    charge_style: str = 'mid',
+    q_prox_tol: float | int = 0.05,
+    fig_name: PathLike | None = 'transition_levels.pdf'
+) -> go.Figure():
+    """
+    Given a TransitionLevels object from pydefect, plots a charge transition level diagram
+    showing the Fermi energy levels and which charges for each defect calculated.
+
+    Args
+    ---------
+        transition_levels (TransitionLevels):
+            `pydefect` TransitionLevels object to get CTL values.
+        skip_defects (list):
+            List of defect names to skip from the transition_levels file. Defaults
+            to an empty list.
+        charge_style (str):
+            String representing style for how to print the charge states. Defaults
+            to 'mid', the midpoint between the nearest CTLs.
+        q_prox_tol (float or int):
+            Tolerance value for two CTLs or CTLs and band edges, below which
+            the charge annotation is not printed. Defaults to 0.05 eV.
+        fig_name (PathLike or None):
+            Name for figure to save or None to not save a figure. Defaults to
+            'transition_levels.pdf'.
+
+    Returns
+    ---------
+        Figure showing CTL values in the bandgap.
+    """
+    for idx, tl in enumerate(transition_levels.transition_levels):
+        if tl.name in skip_defects:
+            transition_levels.transition_levels.pop(idx)
+        
+    defects_list = [defect.name for defect in transition_levels.transition_levels]
+
+    # format defect names for plotting
+    formatted_defects = list(map(lambda s: re.sub(r'\d+', '', s), defects_list))  # remove subscript numbers
+    formatted_defects = list(map(lambda s: re.sub('Va', 'V', s), formatted_defects))  # vacancy Va->V
+    for m, defect_m in enumerate(formatted_defects):
+        if '–' in defect_m:  # check for defect complex with en dashes
+            c_split = defect_m.split('–')
+            complex_list = []
+            for c, defect_c in enumerate(c_split):
+                m_split = defect_c.split('_')
+                if m_split[0] == 'V':  # vacancy
+                    complex_list.append(fr'\LARGE{{{m_split[0]}}}_{{\LARGE{{\text{{{m_split[1]}}}}}}}')
+                elif m_split[1] == 'i':  # interstitial
+                    complex_list.append(fr'\LARGE{{\text{{{m_split[0]}}}}}_{{\LARGE{{{m_split[1]}}}}}')
+                else:  # other
+                    complex_list.append(fr'\LARGE{{\text{{{m_split[0]}}}}}_{{\LARGE{{\text{{{m_split[1]}}}}}}}')
+            formatted_defects[m] = '$'+'–'.join(complex_list)+'$'
+        else:  # not a defect complex
+            m_split = defect_m.split('_')
+            if m_split[0] == 'V':  # single vacancy
+                formatted_defects[m] = fr'$\LARGE{{{m_split[0]}}}_{{\LARGE{{\text{{{m_split[1]}}}}}}}$'
+            elif re.match('(V)+', m_split[0]) and len(m_split[0]) > 1:  # check for vacancy cluster
+                vac_sites = list(filter(None, re.split(r'(?=[A-Z])', m_split[1])))
+                vac_in_cluster = [fr'\LARGE{{V}}_{{\LARGE{{\text{{{vac}}}}}}}' for vac in vac_sites]
+                formatted_defects[m] = '$'+'–'.join(vac_in_cluster)+'$'
+            elif m_split[1] == 'i':  # interstitial
+                formatted_defects[m] = fr'$\LARGE{{\text{{{m_split[0]}}}}}_{{\LARGE{{{m_split[1]}}}}}$'
+            else:  # other
+                formatted_defects[m] = fr'$\LARGE{{\text{{{m_split[0]}}}}}_{{\LARGE{{\text{{{m_split[1]}}}}}}}$'
+    
+    fig = go.Figure()
+    
+    for i in range(len(defects_list)):
+        if len(transition_levels.transition_levels[i].fermi_levels) > 0:
+            defect_fermi_levels = transition_levels.transition_levels[i].fermi_levels
+            defect_fermi_levels.sort()
+
+            defect_names = [transition_levels.transition_levels[i].name for j in range(len(defect_fermi_levels))]
+            defect_ctls = [defect_fermi_levels[j] for j in range(len(defect_fermi_levels))]
+
+            q_curr = [f'{transition_levels.transition_levels[i].charges[j][0]:+}' for j in range(len(defect_fermi_levels))]
+            q_next = [f'{transition_levels.transition_levels[i].charges[j][1]:+}' for j in range(len(defect_fermi_levels))]
+            q_slash = [f'{x}/{y}' for x, y in zip(q_curr, q_next)]
+
+            fig.add_trace(go.Scatter(x=defect_names,
+                                     y=defect_ctls,
+                                     text=q_slash if charge_style.lower()[0] == 's' else None,
+                                     mode='markers+text',
+                                     marker=dict(symbol='line-ew-open',
+                                                 size=24,
+                                                 color=px.colors.qualitative.Dark24[i],
+                                                 line=dict(width=6)
+                                                )
+                                    ))
+
+            if charge_style.lower()[0] == 'm':
+                for k in range(len(defect_names)):
+                    if k == 0:
+                        if defect_ctls[k] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=defect_ctls[k]/2,
+                                text=q_curr[k],
+                                showarrow=False,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_curr[k]} too close to VBM for plotting')
+                    elif k == len(defect_names)-1:
+                        if defect_ctls[k] - defect_ctls[k-1] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=(defect_ctls[k-1]+defect_ctls[k])/2,
+                                text=q_curr[k],
+                                showarrow=False,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_curr[k]} too close to {q_next[k]} for plotting')
+
+                        if transition_levels.cbm - defect_ctls[k] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=(defect_ctls[k]+transition_levels.cbm)/2,
+                                text=q_next[k],
+                                showarrow=False,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_next[k]} too close to CBM for plotting')
+                    else:
+                        if defect_ctls[k] - defect_ctls[k-1] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=(defect_ctls[k-1]+defect_ctls[k])/2,
+                                text=q_curr[k],
+                                showarrow=False,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_curr[k]} too close to {q_next[k]} for plotting')
+        else:
+            fig.add_trace(go.Scatter(x=[transition_levels.transition_levels[i].name],
+                                     y=[0.],
+                                     marker=dict(size=0, opacity=0)
+                                    ))
+
+    fig.update_traces(textposition='top center')
+
+    # VBM
+    fig.add_hline(y=0., line=dict(color='black', width=3, dash='dash'), annotation_text='VBM', annotation_position='bottom left')
+    fig.add_hrect(y0=-0.2, y1=0., line_width=0, fillcolor='red', opacity=0.2)
+    
+    # CBM
+    fig.add_hline(y=transition_levels.cbm, line=dict(color='black', width=3, dash='dash'), annotation_text='CBM', annotation_position='top left')
+    fig.add_hrect(y0=transition_levels.cbm, y1=transition_levels.cbm+0.25, line_width=0, fillcolor='blue', opacity=0.2)
+
+    fig.update_layout(
+        xaxis=dict(
+            title=r'Defects',
+            type='category',
+            tickmode='array',
+            ticktext=formatted_defects,
+            tickvals=defects_list,
+        ),
+        yaxis=dict(
+            title=r'$\Huge{E_{F} \; \text{(eV)}}$',
+            showticklabels=True,
+            tickformat='.1f'
+        ),
+        showlegend=False,
+        margin=dict(l=60, r=20, t=20, b=20),
+        autosize=False, width = 1200, height = 1200
+    )
+
+    if fig_name is not None:
+        fig.write_image(fig_name, scale=2)
+    
+    return fig
+
+
+def generate_carrier_capture_ctl(
+    transition_levels: TransitionLevels,
+    coeffs_df: pd.DataFrame,
+    skip_defects: list = [],
+    charge_style: str = 'mid',
+    coeff_namelist: list = ['C_p', 'C_n'],
+    q_prox_tol: float | int = 0.05,
+    cscale: list = px.colors.sequential.Plasma[:-1]+px.colors.sequential.Aggrnyl_r[1:-1],
+    fig_name: PathLike | None = 'capture_coeff_ctls.pdf'
+) -> go.Figure():
+    """
+    Generates the CTL diagram with hole and electorn capture coefficients on a
+    relative colorscale.
+
+    Args
+    ---------
+        transition_levels (TransitionLevels):
+            `pydefect` TransitionLevels object to get CTL values.
+        coeffs_df (DataFrame):
+            DataFrame containing capture coefficient values for each CTL.
+        skip_defects (list):
+            List of defect names to skip from the transition_levels file. Defaults
+            to an empty list.
+        charge_style (str):
+            String representing style for how to print the charge states. Defaults
+            to 'mid', the midpoint between the nearest CTLs.
+        coeff_namelist (list):
+            List of strings corresponding to the headers for coeffs_df to use.
+            Defaults to ['C_p', 'C_n'] for hole and electron capture.
+        q_prox_tol (float or int):
+            Tolerance value for two CTLs or CTLs and band edges, below which
+            the charge annotation is not printed. Defaults to 0.05 eV.
+        cscale (list):
+            Colorscale to use for heatmap. Defaults to a combination of
+            px.colors.sequential.Plasma and Aggrnyl_r.
+        fig_name (PathLike or None):
+            Name for figure to save or None to not save a figure. Defaults to
+            'capture_coeff_ctls.pdf'.
+
+    Returns
+    ---------
+        Figure showing capture coefficient values on a colorscale on CTL values in
+        the bandgap.
+    """
+    coeff_min, coeff_max = coeffs_df[coeff_namelist].min(axis=None), coeffs_df[coeff_namelist].max(axis=None)
+    cmax, cmin = np.log10(coeff_min)/np.log10(coeff_min), np.log10(coeff_max)/np.log10(coeff_min)
+    cscale_edit = ['rgb(0, 0, 0)']
+    for i in cscale:
+        cscale_edit.append(i)
+    
+    ctl_fig = generate_transition_level_diagram(transition_levels, skip_defects=skip_defects, charge_style='s')
+    data, layout = ctl_fig.data, ctl_fig.layout
+    MARKER_SYMBOL, MARKER_SIZE, MARKER_LINE_WIDTH = data[0].marker.symbol, data[0].marker.size, data[0].marker.line.width
+    MARKER_SYMBOL_EMPTY, MARKER_SIZE_EMPTY, MARKER_LINE_WIDTH_EMPTY = 'square-open', 12, 3
+    
+    fig = make_subplots(rows=1, cols=len(coeff_namelist), shared_yaxes=True, subplot_titles=('Hole Capture (300 K)', 'Electron Capture (300 K)'))
+    fig.update_annotations(font_size=36)
+    subplot_titles = fig.layout.annotations
+    vbm_cbm_text = layout.annotations
+    layout.update({'annotations': subplot_titles+vbm_cbm_text})
+    fig.update_layout(layout)
+    fig.update_xaxes(
+        title_text=layout.xaxis.title.text,
+        tickmode=layout.xaxis.tickmode,
+        ticktext=layout.xaxis.ticktext,
+        tickvals=layout.xaxis.tickvals,
+        row=1, col=2
+    )
+    fig.update_yaxes(showticklabels=True, tickformat='.1f')
+
+    for shape in layout.shapes:
+        fig.add_shape(shape, row=1, col=2)
+    for text in layout.annotations:
+        fig.add_annotation(text, row=1, col=2)
+
+    fig.update_layout(
+        height=1200,
+        width=2400,
+        margin=dict(t=80, l=60)
+    )
+
+    turn_colorbar_on = True
+    color_arrs = {key: {} for key in coeff_namelist}
+    for f in range(len(coeff_namelist)):
+        q_cnt = {}
+        for defect in data:
+            defect_name = defect.x[0]
+            defect_ctls = defect.y
+            ctl_cnt = len(defect_ctls)
+            for ctl in defect_ctls:
+                if defect_name not in q_cnt:
+                    # print(defect_name)
+                    q_cnt.update({defect_name: 0})
+                    color_arrs[coeff_namelist[f]].update({defect_name: np.zeros((ctl_cnt))})
+                    marker_symbol_list = [MARKER_SYMBOL]*ctl_cnt
+                    marker_size_list = [MARKER_SIZE]*ctl_cnt
+                    marker_line_width_list = [MARKER_LINE_WIDTH]*ctl_cnt
+                if defect.text is not None:
+                    q1q2 = defect.text[q_cnt[defect_name]]
+                    q_list = list(map(lambda x: int(x), q1q2.split('/')))
+                    qi, qf = q_list[np.argmax(np.abs(q_list))], q_list[np.argmin(np.abs(q_list))]
+                    
+                    coeff = coeffs_df[coeffs_df.defect == defect_name][coeffs_df.q_i == qi][coeffs_df.q_f == qf][coeff_namelist[f]]
+                    
+                    if coeff.size == 0:
+                        print(defect_name, 'CTL present, no coeff value found')
+                        color_arrs[coeff_namelist[f]][defect_name][q_cnt[defect_name]] = 0.  # np.array(cmin)
+                        marker_symbol_list[q_cnt[defect_name]] = MARKER_SYMBOL_EMPTY
+                        marker_size_list[q_cnt[defect_name]] = MARKER_SIZE_EMPTY
+                        marker_line_width_list[q_cnt[defect_name]] = MARKER_LINE_WIDTH_EMPTY
+                    else:
+                        coeff = coeff.iloc[0]
+                        print(defect_name, 'CTL present, coeff value found')
+                        defect.marker.colorscale = cscale_edit
+                        defect.marker.cauto = False
+                        defect.marker.cmin = 0.
+                        defect.marker.cmax = cmax
+                        defect.marker.showscale = turn_colorbar_on
+                        marker_symbol_list[q_cnt[defect_name]] = MARKER_SYMBOL
+    
+                        # lever rule
+                        cval = (np.log10(coeff) - np.log10(coeff_min))/(np.log10(coeff_max) - np.log10(coeff_min))
+                        color_arrs[coeff_namelist[f]][defect_name][q_cnt[defect_name]] = cval
+    
+                else:
+                    print(defect_name, 'no CTL')
+                    color_arrs[coeff_namelist[f]][defect_name][q_cnt[defect_name]] = 0.
+                
+                defect.marker.color = color_arrs[coeff_namelist[f]][defect_name]
+                defect.marker.symbol = marker_symbol_list
+                defect.marker.size = marker_size_list
+                defect.marker.line.width = marker_line_width_list
+                q_cnt[defect_name] += 1
+            fig.add_trace(defect, row=1, col=f+1)
+
+    print(fig.data)
+    
+    if charge_style.lower()[0] == 'm':
+        for d in fig.data:
+            for f in range(len(coeff_namelist)):
+                defect_names = d.x
+                defect_ctls = d.y
+                q_slash = d.text
+                q_curr, q_next = [], []
+    
+                if q_slash != None:
+                    for qsq in q_slash:
+                        q_temp = qsq.split('/')
+                        q_curr.append(q_temp[0])
+                        q_next.append(q_temp[-1])
+                else:
+                    continue
+
+                # print(defect_names, defect_ctls, q_slash, q_curr, q_next)
+    
+                for k in range(len(defect_names)):
+                    if k == 0:
+                        if defect_ctls[k] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=defect_ctls[k]/2,
+                                text=q_curr[k],
+                                showarrow=False,
+                                row=1, col=f+1,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_curr[k]} too close to VBM for plotting')
+                    elif k == len(defect_names)-1:
+                        if defect_ctls[k] - defect_ctls[k-1] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=(defect_ctls[k-1]+defect_ctls[k])/2,
+                                text=q_curr[k],
+                                showarrow=False,
+                                row=1, col=f+1,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_curr[k]} too close to {q_next[k]} for plotting')
+
+                        if transition_levels.cbm - defect_ctls[k] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=(defect_ctls[k]+transition_levels.cbm)/2,
+                                text=q_next[k],
+                                showarrow=False,
+                                row=1, col=f+1,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_next[k]} too close to CBM for plotting')
+                    else:
+                        if defect_ctls[k] - defect_ctls[k-1] >= q_prox_tol:
+                            fig.add_annotation(
+                                x=defect_names[k], y=(defect_ctls[k-1]+defect_ctls[k])/2,
+                                text=q_curr[k],
+                                showarrow=False,
+                                row=1, col=f+1,
+                                # yshift=10
+                            )
+                        else:
+                            print(f'{defect_names[k]} charge state {q_curr[k]} too close to {q_next[k]} for plotting')
+
+        for d in fig.data:
+            d.text = None
+
+    if fig_name is not None:
+        fig.write_image(fig_name, scale=2)
+    
+    return fig
 
 
 def plot_cap_rates(cap_coeff_path, conc_path, color_dict, temps=[300, 800], im_name=None):

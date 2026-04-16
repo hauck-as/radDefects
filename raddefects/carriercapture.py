@@ -1,6 +1,10 @@
 """Python module to setup/analyze VASP carrier capture calculations."""
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Optional
+from numpy.typing import ArrayLike
+from pymatgen.util.typing import PathLike
+
 import shutil
 import re
 import yaml
