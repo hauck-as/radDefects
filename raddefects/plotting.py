@@ -130,18 +130,20 @@ def combine_figures(fig_list, fig_path, layout='horizontal', font_size=26, sub_l
 
     if layout.lower()[0] == 'h':
         combined_page.mediabox = combined_page.mediabox.scale(sx=num_figs, sy=1.)
-        page_width, page_height = combined_page.mediabox.right/num_figs, combined_page.mediabox.top/num_figs
+        page_width, page_height = combined_page.mediabox.right/num_figs, combined_page.mediabox.top
     elif layout.lower()[0] == 'v':
         combined_page.mediabox = combined_page.mediabox.scale(sx=1., sy=num_figs)
-        page_width, page_height = combined_page.mediabox.right/num_figs, combined_page.mediabox.top/num_figs
+        page_width, page_height = combined_page.mediabox.right, combined_page.mediabox.top/num_figs
         combined_page.add_transformation(Transformation().translate(tx=0, ty=(num_figs-1)*page_height))
     else:
         print('Please choose a valid layout (horizontal/vertical).')
 
     if layout.lower()[0] == 'h':
         for i in range(num_figs-1):
+            next_page = fig_dict[fig_list[i+1]].pages[0]
+            next_page.scale_to(width=page_width, height=page_height)
             combined_page.merge_translated_page(
-                fig_dict[fig_list[i+1]].pages[0],
+                next_page,
                 tx=(i+1)*page_width,
                 ty=0.,
                 expand=False,
@@ -149,8 +151,10 @@ def combine_figures(fig_list, fig_path, layout='horizontal', font_size=26, sub_l
             )
     elif layout.lower()[0] == 'v':
         for i in range(num_figs-1):
+            next_page = fig_dict[fig_list[i+1]].pages[0]
+            next_page.scale_to(width=page_width, height=page_height)
             combined_page.merge_translated_page(
-                fig_dict[fig_list[i+1]].pages[0],
+                next_page,
                 tx=0.,
                 ty=(num_figs-i-2)*page_height,
                 expand=False,
