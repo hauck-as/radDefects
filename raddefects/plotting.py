@@ -19,6 +19,7 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import plotly.io as pio
 from plotly.colors import color_parser, convert_colors_to_same_type
+import colorsys
 
 from pypdf import PdfWriter, PdfReader, Transformation
 from pypdf.annotations import FreeText
@@ -55,6 +56,36 @@ def improve_text_position(
         List of text positions associated for each x value.
     """
     return [txt_positions[(i % len(txt_positions)-(rand.randint(1,2)))] for i in range(len(x))]
+
+
+def darken_colorscale(
+    cscale: list = px.colors.sequential.Plasma[:-1]+px.colors.sequential.Aggrnyl_r[1:-1],
+    lfrac: float = 0.8
+) -> list:
+    """
+    Taking a colorscale, convert to HLS, reduce lightness, and convert back to RGB.
+
+    Args
+    ---------
+        cscale (list):
+            Colorscale to use. Defaults to a combination of
+            px.colors.sequential.Plasma and Aggrnyl_r.
+
+    Returns
+    ---------
+        List of colors in RGB format, same colors as cscale but reduced lightness.
+    """
+    cscale = px.colors.sequential.Plasma[:-1]+px.colors.sequential.Aggrnyl_r[1:-1]
+    cscale_seq = convert_colors_to_same_type(cscale, colortype='tuple')[0]
+    cscale_hls = list(map(lambda c: colorsys.rgb_to_hls(*c), cscale_seq))
+    cscale_shifted = []
+    for i in range(len(cscale_hls)):
+        cscale_shifted.append((cscale_hls[i][0], cscale_hls[i][1]*lfrac, cscale_hls[i][2]))
+    cscale_rgb = convert_colors_to_same_type(
+        list(map(lambda c: colorsys.hls_to_rgb(*c), cscale_shifted)),
+        colortype='rgb'
+    )[0]
+    return cscale_rgb
 
 
 # Change Plotly default template to simple white and modify for 
@@ -680,8 +711,6 @@ def generate_carrier_capture_ctl(
                 defect.marker.line.width = marker_line_width_list
                 q_cnt[defect_name] += 1
             fig.add_trace(defect, row=1, col=f+1)
-
-    print(fig.data)
     
     if charge_style.lower()[0] == 'm':
         for d in fig.data:
