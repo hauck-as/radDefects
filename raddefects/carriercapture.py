@@ -1354,12 +1354,12 @@ def parse_carrier_capture_info(
             if g_h.is_integer() == False:
                 print('Hole capture degeneracy not an integer.')
                 
-            cc_dict.update({'g_e': int(g_e), 'g_h': int(g_h)})
+            cc_dict.update({'g_e': float(g_e), 'g_h': float(g_h)})
         except FileNotFoundError:
             cc_dict.update({'g_e': None, 'g_h': None})
             print(f'No {degen_csvpath} file found in defect directory.')
     else:
-        cc_dict.update({'g_e': int(g_e), 'g_h': int(g_h)})
+        cc_dict.update({'g_e': float(g_e), 'g_h': float(g_h)})
 
     # add info to yaml dict
     cc_dict.update({
