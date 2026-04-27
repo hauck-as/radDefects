@@ -668,12 +668,14 @@ def generate_carrier_capture_ctl(
             ctl_cnt = len(defect_ctls)
             for ctl in defect_ctls:
                 if defect_name not in q_cnt:
-                    # print(defect_name)
                     q_cnt.update({defect_name: 0})
                     color_arrs[coeff_namelist[f]].update({defect_name: np.zeros((ctl_cnt))})
                     marker_symbol_list = [MARKER_SYMBOL]*ctl_cnt
                     marker_size_list = [MARKER_SIZE]*ctl_cnt
                     marker_line_width_list = [MARKER_LINE_WIDTH]*ctl_cnt
+                    if len(q_cnt.keys()) == 1:
+                        # display colorscale for first defect only to avoid stacking
+                        defect.marker.showscale = turn_colorbar_on
                 if defect.text is not None:
                     q1q2 = defect.text[q_cnt[defect_name]]
                     q_list = list(map(lambda x: int(x), q1q2.split('/')))
@@ -682,19 +684,18 @@ def generate_carrier_capture_ctl(
                     coeff = coeffs_df[coeffs_df.defect == defect_name][coeffs_df.q_i == qi][coeffs_df.q_f == qf][coeff_namelist[f]]
                     
                     if coeff.size == 0:
-                        print(defect_name, 'CTL present, no coeff value found')
+                        print(f'{defect_name} {q1q2} CTL present, no {coeff_namelist[f]} coeff value found')
                         color_arrs[coeff_namelist[f]][defect_name][q_cnt[defect_name]] = 0.  # np.array(cmin)
                         marker_symbol_list[q_cnt[defect_name]] = MARKER_SYMBOL_EMPTY
                         marker_size_list[q_cnt[defect_name]] = MARKER_SIZE_EMPTY
                         marker_line_width_list[q_cnt[defect_name]] = MARKER_LINE_WIDTH_EMPTY
                     else:
                         coeff = coeff.iloc[0]
-                        print(defect_name, 'CTL present, coeff value found')
+                        print(f'{defect_name} {q1q2} CTL present, {coeff_namelist[f]} coeff value found')
                         defect.marker.colorscale = cscale_edit
                         defect.marker.cauto = False
                         defect.marker.cmin = 0.
                         defect.marker.cmax = cmax
-                        defect.marker.showscale = turn_colorbar_on
                         marker_symbol_list[q_cnt[defect_name]] = MARKER_SYMBOL
     
                         # lever rule
@@ -702,7 +703,7 @@ def generate_carrier_capture_ctl(
                         color_arrs[coeff_namelist[f]][defect_name][q_cnt[defect_name]] = cval
     
                 else:
-                    print(defect_name, 'no CTL')
+                    print(f'{defect_name} no {q1q2} CTL found')
                     color_arrs[coeff_namelist[f]][defect_name][q_cnt[defect_name]] = 0.
                 
                 defect.marker.color = color_arrs[coeff_namelist[f]][defect_name]
@@ -727,8 +728,6 @@ def generate_carrier_capture_ctl(
                         q_next.append(q_temp[-1])
                 else:
                     continue
-
-                # print(defect_names, defect_ctls, q_slash, q_curr, q_next)
     
                 for k in range(len(defect_names)):
                     if k == 0:
