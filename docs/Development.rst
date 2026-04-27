@@ -20,7 +20,6 @@ core.py
 -----------------
 carriercapture.py
 -----------------
-* keyword arg for specifying CTL file in parse_carrier_capture_info
 
 ------
 cli.py

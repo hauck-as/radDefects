@@ -983,7 +983,10 @@ def parse_carrier_capture_info(
     displacements: ArrayLike = np.array([
         -0.2, -0.1, 0., 0.1, 0.2
     ]),
-    savefig: PathLike | None = None
+    cc_yaml_filename: PathLike = 'carrier_capture_params.yaml',
+    ctl_jsonpath: PathLike = 'transition_levels.json',
+    degen_csvpath: PathLike = 'degeneracies.csv',
+    savefig_wif: PathLike | None = None
 ) -> dict:
     """
     Analyze defect calculations to gather parameters for carrier capture
@@ -1030,10 +1033,21 @@ def parse_carrier_capture_info(
             of the final state and 1 corresponds to the equilibrium
             structure of the initial state. Defaults to -0.2 to 0.2 in
             0.1 increments (around final state equilibrium).
-        savefig (PathLike):
+        cc_yaml_filename (PathLike):
+            Path to write YAML file with all carrier capture calculation
+            info to. Will be relative to carrier_capture directory.
+            Defaults to 'carrier_capture_params.yaml'.
+        ctl_jsonpath (PathLike):
+            Path to JSON file with charge transition levels, relative to
+            defect directory path. Should follow the format from
+            `pydefect`. Defaults to 'transition_levels.json'.
+        degen_csvpath (PathLike):
+            Path to CSV file with defect degeneracies, relative to
+            defect directory path. Should follow the format from
+            `doped`. Defaults to 'degeneracies.csv'.
+        savefig_wif (PathLike or None):
             Relative path to save figure of electron-phonon coupling
             matrix element fitting. Defaults to None (no figure saved).
-            CURRENTLY WIP.
 
     Returns
     ---------
@@ -1041,7 +1055,6 @@ def parse_carrier_capture_info(
         capture.
     """
     # initialize yaml with given information
-    cc_yaml_filename = 'carrier_capture_params.yaml'
     cc_dict = {
         'defect': str(defect_name),
         'q_initial': int(q_initial),
@@ -1065,7 +1078,7 @@ def parse_carrier_capture_info(
     # add charge transition level between q_i/q_f &
     # VBM/CBM if transition_levels.json exists
     try:
-        transition_levels = loadfn(defect_path / 'transition_levels.json')
+        transition_levels = loadfn(defect_path / ctl_jsonpath)
         for tl in transition_levels.transition_levels:
             tl.fermi_levels.sort()
             for name, charge, energy, fermi in zip_longest(
@@ -1076,7 +1089,7 @@ def parse_carrier_capture_info(
         cc_dict.update({'vbm': float(0.), 'cbm': float(transition_levels.cbm)})
     except:
         cc_dict.update({'formation energy': None, 'ctl': None, 'vbm': None, 'cbm': None})
-        print('No transition_levels.json file found in defect directory.')
+        print(f'No {ctl_jsonpath} file found in defect directory.')
 
     # get VBM/CBM from EIGENVAL if not determined from CTL file
     # get band indices for degenerate valence band states
@@ -1156,7 +1169,10 @@ def parse_carrier_capture_info(
     i_struc = Structure.from_file(defect_initial_path / 'CONTCAR')
     f_struc = Structure.from_file(defect_final_path / 'CONTCAR')
     i_WSWQs, f_WSWQs = [], []
-    fig_vbm, fig_cbm = plt.figure(figsize=(12, 5)), plt.figure(figsize=(12, 5))
+
+    # create combined Wif figure
+    wif_fig = plt.figure(figsize=(12, 10), layout='constrained')
+    wif_subfigs = wif_fig.subfigures(2, 1)
     
     coupling_state_keystr = coupling_state.lower()[0]
     # check if coupling state is final or ground
@@ -1187,7 +1203,7 @@ def parse_carrier_capture_info(
             valence_indices,
             spin=spin,
             kpoint=kpt_idx+1,
-            fig=fig_vbm
+            fig=wif_subfigs[0]
         )
         f_Wifs_cbm = get_Wif_from_WSWQ(
             f_WSWQs,
@@ -1196,7 +1212,7 @@ def parse_carrier_capture_info(
             conduction_indices,
             spin=spin,
             kpoint=kpt_idx+1,
-            fig=fig_cbm
+            fig=wif_subfigs[1]
         )
         Wif_vbm = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_vbm]))
         Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in f_Wifs_cbm]))
@@ -1204,11 +1220,12 @@ def parse_carrier_capture_info(
     # check if coupling state is initial or excited
     elif coupling_state_keystr == 'i' or coupling_state_keystr == 'e':
         # path to initial vasprun
-        ground_vr_path = capture_initial_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'vasprun.xml'
+        wav_Q0 = f'WAV_{str(Q0).replace('.', ''):0>3}'
+        ground_vr_path = capture_initial_path / wav_Q0 / 'vasprun.xml'
         # adjust valence/conduction band indices by electron difference
         # from perfect reference to coupling reference
         defect_eigenvals = Eigenval(
-            capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL',
+            capture_final_path / wav_Q0 / 'EIGENVAL',
             separate_spins=True
         )
         nelect_diff = perfect_eigenvals.nelect - defect_eigenvals.nelect
@@ -1229,7 +1246,7 @@ def parse_carrier_capture_info(
             valence_indices,
             spin=spin,
             kpoint=kpt_idx+1,
-            fig=fig_vbm
+            fig=wif_subfigs[0]
         )
         i_Wifs_cbm = get_Wif_from_WSWQ(
             i_WSWQs,
@@ -1238,7 +1255,7 @@ def parse_carrier_capture_info(
             conduction_indices,
             spin=spin,
             kpoint=kpt_idx+1,
-            fig=fig_cbm
+            fig=wif_subfigs[1]
         )
         Wif_vbm = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_vbm]))
         Wif_cbm = np.sqrt(np.mean([x[1]**2 for x in i_Wifs_cbm]))
@@ -1255,12 +1272,54 @@ def parse_carrier_capture_info(
         defect_indices.append(int(min(conduction_indices)-1))
     defect_indices.sort()
     
-    plt.tight_layout()
-    plt.ylim(-0.35,0.35)
-    if savefig == None:
+    Wif_vbm_dec, Wif_vbm_exp = f'{Wif_vbm:.2E}'.split('E')
+    Wif_cbm_dec, Wif_cbm_exp = f'{Wif_cbm:.2E}'.split('E')
+    wif_subfigs[0].suptitle(
+        (rf'$\tilde{{W}}_{{if}} \; \text{{(VBM):}} \; {float(Wif_vbm_dec)} \times'
+         rf'10^{{{int(Wif_vbm_exp):d}}} \; \text{{eV}}/\text{{amu}}^{{1/2}} \text{{Å}}$'),
+        fontsize=20,
+        math_fontfamily='cm'
+    )
+    wif_subfigs[1].suptitle(
+        (rf'$\tilde{{W}}_{{if}} \; \text{{(CBM):}} \; {float(Wif_cbm_dec)} \times'
+         rf'10^{{{int(Wif_cbm_exp):d}}} \; \text{{eV}}/\text{{amu}}^{{1/2}} \text{{Å}}$'),
+        fontsize=20,
+        math_fontfamily='cm'
+    )
+
+    for sub in wif_subfigs:
+        sub.supylabel(
+            (r'$\left\langle \tilde{\psi}_{i} \left( 0 \right) \left| \hat{\tilde{S}}'
+             r'\left( 0 \right) \right| \tilde{\psi}_{f} \left( Q \right) \right\rangle$'),
+            fontsize=18,
+            math_fontfamily='cm'
+        )
+    
+    for ax in wif_fig.axes:
+        ax.set_title(
+            ax.get_title(),
+            fontsize=18
+        )
+        ax.set_xlabel(
+            r'$Q \; \text{(amu}^{1/2} \text{Å)}$',
+            fontsize=18,
+            math_fontfamily='cm'
+        )
+        ax.minorticks_on()
+        ax.tick_params(
+            top=True,
+            bottom=True,
+            right=True,
+            left=True,
+            which='both',
+            direction='in',
+            labelsize=16
+        )
+    
+    if savefig_wif == None:
         plt.show()
-    elif type(savefig) == str:
-        plt.savefig(capture_calc_path / savefig, dpi=300)
+    elif type(savefig_wif) == str:
+        plt.savefig(capture_calc_path / savefig_wif, dpi=300)
     else:
         raise ValueError('Please choose a valid image name.')
 
@@ -1270,7 +1329,7 @@ def parse_carrier_capture_info(
     # calculate capture degeneracies of the defect
     if g_e is None or g_h is None:
         try:
-            degen_df = pd.read_csv(defect_path / 'degeneracies.csv')
+            degen_df = pd.read_csv(defect_path / degen_csvpath)
             degen_initial = degen_df.loc[(degen_df['Defect'] == defect_name) & \
                                          (degen_df['q'] == q_initial)]
             degen_final = degen_df.loc[(degen_df['Defect'] == defect_name) & \
@@ -1288,7 +1347,7 @@ def parse_carrier_capture_info(
                 g_e, g_h = g_cap_dict['g_e'], g_cap_dict['g_h']
             except IndexError:
                 cc_dict.update({'g_e': None, 'g_h': None})
-                print('Defect transition not present in degeneracies.csv')
+                print(f'Defect transition not present in {degen_csvpath}')
             
             if g_e.is_integer() == False:
                 print('Electron capture degeneracy not an integer.')
@@ -1298,7 +1357,7 @@ def parse_carrier_capture_info(
             cc_dict.update({'g_e': int(g_e), 'g_h': int(g_h)})
         except FileNotFoundError:
             cc_dict.update({'g_e': None, 'g_h': None})
-            print('No degeneracies.csv file found in defect directory.')
+            print(f'No {degen_csvpath} file found in defect directory.')
     else:
         cc_dict.update({'g_e': int(g_e), 'g_h': int(g_h)})
 
