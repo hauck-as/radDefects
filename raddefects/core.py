@@ -18,7 +18,7 @@ from pymatgen.core import Element, Structure, Lattice
 from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from pymatgen.io.vasp.inputs import Poscar, Potcar
 from pymatgen.io.vasp.outputs import Locpot
-from pymatgen.analysis.defects.core import DefectComplex, Vacancy
+from pymatgen.analysis.defects.core import DefectComplex, Vacancy, Substitution
 from mp_api.client import MPRester
 from vise.util.logger import get_logger
 from pydefect.input_maker.defect_set import DefectSet
