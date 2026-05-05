@@ -1,8 +1,10 @@
 """Core functions and classes for analyzing rad-induced defects from VASP."""
-from typing import TYPE_CHECKING, Optional
-
 import os
 from pathlib import Path
+from typing import TYPE_CHECKING, Sequence, Optional
+from numpy.typing import ArrayLike
+from pymatgen.util.typing import PathLike
+
 import shutil
 import json
 import yaml
@@ -156,11 +158,33 @@ def change_initial_defect_config(defect_path, initial_path):
     return None
 
 
-def create_vacancy_complex(vacs, base_path=Path.cwd(), vac_comp_ind=1):
+def create_vacancy_complex(
+    vacs: Sequence[str],
+    base_path: PathLike = Path.cwd(),
+    vac_comp_idx: int = 1
+) -> DefectComplex:
     """
-    Given a tuple of vacancy sites and the path to the perfect supercell POSCAR,
-    generates a defective supercell with a vacancy complex and adds initial charge
+    Generates a defective supercell with a vacancy complex and adds initial charge
     guesses to the rad_defect_in.yaml.
+    
+    Args
+    ---------
+        vacs (Sequence[str]):
+            List/tuple of strings corresponding to elements to replace
+            with vacant sites.
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect subdirectory.
+            Assumes a POSCAR file exists in base_path/defect/perfect/.
+            Defaults to Path.cwd().
+        vac_comp_idx (int):
+            Index of the vacancy complex, used to differentiate
+            distinct defects of the same type. Defaults to 1.
+
+    Returns
+    ---------
+        `pymatgen-defect-analysis` DefectComplex object.
     """
     defects_path, rad_defects_path = base_path / 'defect', base_path / 'rad_poscars'
     
@@ -168,7 +192,7 @@ def create_vacancy_complex(vacs, base_path=Path.cwd(), vac_comp_ind=1):
     perfect_pos = Poscar.from_file(perfect_poscar_path)
     
     # create vacancy complex name
-    defect_name = '_'.join(['V'*len(vacs), ''.join(vacs)+str(vac_comp_ind)])
+    defect_name = '_'.join(['V'*len(vacs), ''.join(vacs)+str(vac_comp_idx)])
     
     # sum valence of each atom becoming vacancy and create charge list
     tot_valence = sum([Element(i).valence[1] for i in vacs])
@@ -221,6 +245,106 @@ def create_vacancy_complex(vacs, base_path=Path.cwd(), vac_comp_ind=1):
         logger.info(f'POSCAR exists, so skipped...')
     
     return vac_complex
+
+
+def create_vac_sub_complex(
+    vac_site: str,
+    sub_site: str,
+    sub_type: str,
+    base_path: PathLike = Path.cwd(),
+    comp_idx: int = 1
+) -> DefectComplex:
+    """
+    Generates a defective supercell with a vacancy-substitutional
+    complex and adds initial charge guesses to rad_defect_in.yaml.
+    
+    Args
+    ---------
+        vac_site (str):
+            String corresponding to element to replace with vacancy.
+        sub_site (str):
+            String corresponding to element at site to replace with
+            the substitutional defect.
+        sub_type (str):
+            String corresponding to element to place at the
+            substitutional site.
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect subdirectory.
+            Assumes a POSCAR file exists in base_path/defect/perfect/.
+            Defaults to Path.cwd().
+        comp_idx (int):
+            Index of the defect complex, used to differentiate
+            distinct defects of the same type. Defaults to 1.
+
+    Returns
+    ---------
+        `pymatgen-defect-analysis` DefectComplex object.
+    """
+    defects_path, rad_defects_path = base_path / 'defect', base_path / 'rad_poscars'
+    
+    perfect_poscar_path = defects_path / 'perfect' / 'POSCAR'
+    perfect_pos = Poscar.from_file(perfect_poscar_path)
+    
+    # create vacancy/substitutional complex name
+    # future: DefectComplex should have a list with each type inside as an attribute
+    # indicate defects in name based on capital letters
+    defect_name = f'V{sub_type}_{vac_site}{sub_site}{comp_idx}'
+    
+    # sum valence of each atom becoming vacancy and create charge list
+    tot_valence = sum([Element(i).valence[1] for i in [vac_site, sub_type]])
+    complex_chgs = range(-tot_valence, tot_valence+1, 1)
+    
+    # try to add name: complex_charges to yaml
+    try:
+        with open(defects_path / 'rad_defect_in.yaml', 'r') as rdy:
+            rad_defect_set = yaml.safe_load(rdy)
+
+            try:
+                # add defect if it doesn't appear in yaml
+                if defect_name not in rad_defect_set:
+                    rad_defect_set.update({defect_name: list(complex_chgs)})
+            except TypeError:
+                # if yaml file is empty create new dict
+                rad_defect_set = {defect_name: list(complex_chgs)}
+            
+    except FileNotFoundError:
+        # create rad_defect_in.yaml if it doesn't exist
+        rad_defect_set = {defect_name: list(complex_chgs)}
+    
+    with open(defects_path / 'rad_defect_in.yaml', 'w') as rdy:
+        yaml.dump(rad_defect_set, rdy, default_flow_style=None)
+    
+    # copy perfect structure to add defect
+    defect_struc = perfect_pos.structure.copy()
+    
+    # create vacancy at first index
+    vac_site0 = defect_struc.sites[defect_struc.indices_from_symbol(vac_site)[0]]
+    defect_list = [Vacancy(structure=defect_struc, site=vac_site0)]
+    # nearest neighbor sites for complex
+    vac0_neighbors = defect_struc.get_all_neighbors(r=2.5, sites=[vac_site0])[0]
+    
+    # find the closest neighbor that has the same site type as the substitutional site
+    sub_site = vac0_neighbors[0]
+    for n in range(len(vac0_neighbors)):
+        neighbor_site = vac0_neighbors[n]
+        if sub_site == neighbor_site.label:
+            if math.dist(vac_site0.coords, sub_site.coords) < math.dist(vac_site0.coords, neighbor_site.coords):
+                sub_site = neighbor_site
+    sub_site.species = Element(sub_type)
+    defect_list.append(Substitution(structure=defect_struc, site=sub_site))
+    
+    vac_sub_complex = DefectComplex(defects=[pd for pd in defect_list])
+    
+    vac_sub_complex_pos = Poscar(vac_sub_complex.defect_structure)
+    
+    try:
+        vac_sub_complex_pos.write_file(rad_defects_path / ('POSCAR_' + defect_name))
+    except FileExistsError:
+        logger.info(f'POSCAR exists, so skipped...')
+    
+    return vac_sub_complex
 
 
 # want to generate directories for complex defects, similar to pydefect_vasp de
