@@ -477,7 +477,7 @@ def setup_defect_subcalcs(
         defect_pattern += '/'
 
     # ensure defect_pattern ends with '/'
-    if not continue_from.endswith('/'):
+    if continue_from is not None and not continue_from.endswith('/'):
         continue_from += '/'
     
     defect_dirs = [_ for _ in defect_path.glob(f'{defect_pattern}')]
