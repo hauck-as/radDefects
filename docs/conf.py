@@ -15,7 +15,7 @@ copyright = '2024, Alexander S. Hauck'
 author = 'Alexander S. Hauck'
 
 release = '1.5'
-version = '1.5.2'
+version = '1.5.3'
 
 # -- General configuration
 
@@ -96,6 +96,6 @@ autodoc_mock_imports = [
     'importlib', 'string', 're', 'pprint', 'glob', 'contextlib',
     'shutil', 'json', 'yaml', 'monty', 'itertools',
     'math', 'numpy', 'pandas', 'random',
-    'matplotlib', 'mpl_toolkits', 'plotly', 'pypdf', 'fpdf',
+    'matplotlib', 'mpl_toolkits', 'plotly', 'pypdf', 'fpdf', 'pymupdf',
     'pymatgen', 'pydefect', 'nonrad', 'doped', 'sumo', 'mp_api'
-    ]
+]

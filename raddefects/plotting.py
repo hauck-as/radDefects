@@ -25,6 +25,7 @@ from pypdf import PdfWriter, PdfReader, Transformation
 from pypdf.annotations import FreeText
 from contextlib import contextmanager
 from fpdf import FPDF, get_scale_factor
+import pymupdf
 
 from pydefect.analyzer.transition_levels import TransitionLevels
 from raddefects.carriercapture import calc_all_cap_rates
@@ -107,8 +108,43 @@ pl_paper_theme.layout.yaxis.tickfont.size = 36
 pio.templates.default = pl_paper_theme
 
 
-def annotate_subfigs(subfigs_path, fig_path, num_figs=2, layout='horizontal', font_size=26, sub_list=alc):
+def annotate_subfigs(
+    subfigs_path: PathLike,
+    fig_path: PathLike,
+    num_figs: int = 2,
+    layout: str = 'horizontal',
+    font_size: int = 26,
+    sub_list: list = alc,
+    annot_offset_x: int = 10,
+    annot_offset_y: int = 100
+) -> PdfWriter:
     """
+    Annotates a figure with subfigure labels.
+    
+    Args
+    ---------
+        subfigs_path (list):
+            Path to the figure file to be annotated.
+        fig_path (PathLike or None):
+            Path to save the annotated figure.
+        layout (str):
+            Layout of the combined figures ('horizontal' or 'vertical').
+            Defaults to 'horizontal'.
+        font_size (int):
+            Font size for subfigure annotations. Defaults to 26.
+        sub_list (list):
+            List of labels for subfigure annotations. Defaults to
+            lowercase letters (ascii_lowercase: a, b, c, ...).
+        annot_offset_x (int):
+            Offset in x-direction for subfigure annotation. Defaults
+            to 10.
+        annot_offset_y (int):
+            Offset in y-direction for subfigure annotation. Defaults
+            to 100.
+
+    Returns
+    ---------
+        PdfWriter object of the combined figure.
     """
     subfigs_pdf = PdfWriter(subfigs_path)
     subfigs_page = subfigs_pdf.pages[0]
@@ -135,10 +171,10 @@ def annotate_subfigs(subfigs_path, fig_path, num_figs=2, layout='horizontal', fo
         pdf.set_font('times', style='B', size=font_size)
         if layout.lower()[0] == 'h':
             for i in range(num_figs):
-                pdf.text((i*page_width)+10, 100, f'{alc[i]})')
+                pdf.text((i*page_width)+annot_offset_x, annot_offset_y, f'{sub_list[i]})')
         elif layout.lower()[0] == 'v':
             for i in range(num_figs):
-                pdf.text(10, (i*page_height)+100, f'{alc[i]})')
+                pdf.text(annot_offset_x, (i*page_height)+annot_offset_y, f'{sub_list[i]})')
         else:
             print('Please choose a valid layout (horizontal/vertical).')
     
@@ -148,84 +184,161 @@ def annotate_subfigs(subfigs_path, fig_path, num_figs=2, layout='horizontal', fo
     return subfigs_pdf
 
 
-def combine_figures(fig_list, fig_path, layout='horizontal', font_size=26, sub_list=alc):
+def combine_figures(
+    fig_list: list,
+    fig_path: PathLike | None,
+    layout: str = 'horizontal',
+    font_size: int = 26,
+    sub_list: list = alc,
+    annot_offset_x: int = 10,
+    annot_offset_y: int = 100,
+    use_xobject: bool = False
+) -> PdfWriter:
     """
-    Combine pdf figures into a single figure with alphabetical corner annotations.
-    Assumes all figures are the same size and shape.
+    Combine pdf figures into a single figure with alphabetical corner
+    annotations. Scales subfigures based on the size of the first
+    subfigure.
+    
+    Args
+    ---------
+        fig_list (list):
+            List of paths to pdf figures to be combined.
+        fig_path (PathLike or None):
+            Path to save the combined figure.
+        layout (str):
+            Layout for combining figures ('horizontal' or 'vertical').
+            Defaults to 'horizontal'.
+        font_size (int):
+            Font size for subfigure annotations. Defaults to 26.
+        sub_list (list):
+            List of labels for subfigure annotations. Defaults to
+            lowercase letters (ascii_lowercase: a, b, c, ...).
+        annot_offset_x (int):
+            Offset in x-direction for subfigure annotation. Defaults
+            to 10.
+        annot_offset_y (int):
+            Offset in y-direction for subfigure annotation. Defaults
+            to 100.
+        use_xobject (bool):
+            Whether to use xobjects for combining figures. May be useful
+            in case of errors during figure merge. Defaults to False.
+
+    Returns
+    ---------
+        PdfWriter object of the combined figure.
     """
-    num_figs = len(fig_list)
-    fig_dict = {pdf_path: PdfReader(pdf_path) for pdf_path in fig_list}
-    combined_pdf = PdfWriter()
-    combined_page = fig_dict[fig_list[0]].pages[0]
-    page_width, page_height = combined_page.mediabox.right, combined_page.mediabox.top
-
-    if layout.lower()[0] == 'h':
-        combined_page.mediabox = combined_page.mediabox.scale(sx=num_figs, sy=1.)
-        page_width, page_height = combined_page.mediabox.right/num_figs, combined_page.mediabox.top
-    elif layout.lower()[0] == 'v':
-        combined_page.mediabox = combined_page.mediabox.scale(sx=1., sy=num_figs)
-        page_width, page_height = combined_page.mediabox.right, combined_page.mediabox.top/num_figs
-        combined_page.add_transformation(Transformation().translate(tx=0, ty=(num_figs-1)*page_height))
-    else:
-        print('Please choose a valid layout (horizontal/vertical).')
-
-    if layout.lower()[0] == 'h':
-        for i in range(num_figs-1):
-            next_page = fig_dict[fig_list[i+1]].pages[0]
-            next_page.scale_to(width=page_width, height=page_height)
-            combined_page.merge_translated_page(
-                next_page,
-                tx=(i+1)*page_width,
-                ty=0.,
-                expand=False,
-                over=False
+    if use_xobject:
+        srcs = [pymupdf.open(_) for _ in fig_list]
+        page_width, page_height = srcs[0][0].rect.width, srcs[0][0].rect.height
+        num_figs = len(fig_list)
+        combined_pdf = pymupdf.open()
+        if layout[0].lower() == 'v':
+            page = combined_pdf.new_page(width=page_width, height=page_height*num_figs)
+            for i, s in enumerate(srcs):
+                rect = pymupdf.Rect(0, i*page_height, page_width, (i+1)*page_height)
+                page.show_pdf_page(rect, s, 0)
+        else:
+            page = combined_pdf.new_page(width=page_width*num_figs, height=page_height)
+            for i, s in enumerate(srcs):
+                rect = pymupdf.Rect(i*page_width, 0, (i+1)*page_width, page_height)
+                page.show_pdf_page(rect, s, 0)
+        
+        if fig_path is not None:
+            combined_pdf.save(fig_path)
+            
+            annotate_subfigs(
+                fig_path,
+                fig_path,
+                num_figs=num_figs,
+                layout=layout,
+                font_size=font_size,
+                sub_list=sub_list,
+                annot_offset_x=annot_offset_x,
+                annot_offset_y=annot_offset_y
             )
-    elif layout.lower()[0] == 'v':
-        for i in range(num_figs-1):
-            next_page = fig_dict[fig_list[i+1]].pages[0]
-            next_page.scale_to(width=page_width, height=page_height)
-            combined_page.merge_translated_page(
-                next_page,
-                tx=0.,
-                ty=(num_figs-i-2)*page_height,
-                expand=False,
-                over=False
-            )
+    
     else:
-        print('Please choose a valid layout (horizontal/vertical).')
-
+        num_figs = len(fig_list)
+        fig_dict = {pdf_path: PdfReader(pdf_path) for pdf_path in fig_list}
+        combined_pdf = PdfWriter()
+        combined_page = fig_dict[fig_list[0]].pages[0]
+        page_width, page_height = combined_page.mediabox.right, combined_page.mediabox.top
     
-    @contextmanager
-    def add_to_page(reader_page, unit='pt'):
-        """
-        Use function from fpdf2+pypdf tutorial to add annotations (change font
-        size and style).
-        https://py-pdf.github.io/fpdf2/CombineWithPypdf.html#combine-with-pypdf
-        """
-        k = get_scale_factor(unit)
-        fpdf_format = (reader_page.mediabox[2] / k, reader_page.mediabox[3] / k)
-        pdf = FPDF(format=fpdf_format, unit=unit)
-        pdf.add_page()
-        yield pdf
-        page_overlay = PdfReader(io.BytesIO(pdf.output())).pages[0]
-        reader_page.merge_page(page2=page_overlay)
-    
-
-    with add_to_page(combined_page) as pdf:
-        pdf.set_font('times', style='B', size=font_size)
         if layout.lower()[0] == 'h':
-            for i in range(num_figs):
-                pdf.text((i*page_width)+2, 25, f'{sub_list[i]})')
+            combined_page.mediabox = combined_page.mediabox.scale(sx=num_figs, sy=1.)
+            page_width, page_height = combined_page.mediabox.right/num_figs, combined_page.mediabox.top
         elif layout.lower()[0] == 'v':
-            for i in range(num_figs):
-                pdf.text(2, (i*page_height)+25, f'{sub_list[i]})')
+            combined_page.mediabox = combined_page.mediabox.scale(sx=1., sy=num_figs)
+            page_width, page_height = combined_page.mediabox.right, combined_page.mediabox.top/num_figs
+            combined_page.add_transformation(Transformation().translate(tx=0, ty=(num_figs-1)*page_height))
         else:
             print('Please choose a valid layout (horizontal/vertical).')
     
-    combined_pdf.add_page(combined_page)
+        if layout.lower()[0] == 'h':
+            for i in range(num_figs-1):
+                next_page = fig_dict[fig_list[i+1]].pages[0]
+                next_page.scale_to(width=page_width, height=page_height)
+                combined_page.merge_translated_page(
+                    next_page,
+                    tx=(i+1)*page_width,
+                    ty=0.,
+                    expand=False,
+                    over=False
+                )
+        elif layout.lower()[0] == 'v':
+            for i in range(num_figs-1):
+                next_page = fig_dict[fig_list[i+1]].pages[0]
+                next_page.scale_to(width=page_width, height=page_height)
+                combined_page.merge_translated_page(
+                    next_page,
+                    tx=0.,
+                    ty=(num_figs-i-2)*page_height,
+                    expand=False,
+                    over=False
+                )
+        else:
+            print('Please choose a valid layout (horizontal/vertical).')
     
-    if fig_path is not None:
-        combined_pdf.write(fig_path)
+        
+        @contextmanager
+        def add_to_page(reader_page, unit='pt'):
+            """
+            Use function from fpdf2+pypdf tutorial to add annotations (change font
+            size and style).
+            https://py-pdf.github.io/fpdf2/CombineWithPypdf.html#combine-with-pypdf
+            """
+            k = get_scale_factor(unit)
+            fpdf_format = (reader_page.mediabox[2] / k, reader_page.mediabox[3] / k)
+            pdf = FPDF(format=fpdf_format, unit=unit)
+            pdf.add_page()
+            yield pdf
+            page_overlay = PdfReader(io.BytesIO(pdf.output())).pages[0]
+            reader_page.merge_page(page2=page_overlay)
+        
+    
+        with add_to_page(combined_page) as pdf:
+            pdf.set_font('times', style='B', size=font_size)
+            if layout.lower()[0] == 'h':
+                for i in range(num_figs):
+                    pdf.text(
+                        (i*page_width)+annot_offset_x,
+                        annot_offset_y,
+                        f'{sub_list[i]})'
+                    )
+            elif layout.lower()[0] == 'v':
+                for i in range(num_figs):
+                    pdf.text(
+                        annot_offset_x,
+                        (i*page_height)+annot_offset_y,
+                        f'{sub_list[i]})'
+                    )
+            else:
+                print('Please choose a valid layout (horizontal/vertical).')
+        
+        combined_pdf.add_page(combined_page)
+        
+        if fig_path is not None:
+            combined_pdf.write(fig_path)
     
     return combined_pdf
 
