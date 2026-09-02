@@ -713,6 +713,127 @@ def setup_carrier_capture_perfect_ref(
     return None
 
 
+def adjust_carrier_capture_calc(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    charge_key: str = 'both',
+    cc_stage: str = 'DISP',
+    displacements: ArrayLike | None = None,
+    base_path: Path = Path.cwd(),
+    potcar: Potcar | None = None,
+    kpt: Kpoints | None = None,
+    incar_settings: dict | None = None
+) -> Path:
+    """
+    Setup carrier capture calculations from previous `pydefect`
+    calculations.
+
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        charge_key (str):
+            Charge state calculations to adjust. Initial corresponds to
+            i_q, final corresponds to f_q+/-1, and both corresponds to
+            both. First character of the lowercase string is used for
+            the conditional. Defaults to 'both'.
+        cc_stage (str):
+            Stage of carrier capture calculations to adjust (DISP, WAV,
+            or WSWQ). Defaults to 'DISP' (displacement calculations).
+        displacements (ArrayLike):
+            Array of fractional displacements between the initial and
+            final structures. 0 corresponds to the equilibrium structure
+            of the final state and 1 corresponds to the equilibrium
+            structure of the initial state. Defaults to None (use all
+            that exist and match the cc_stage via Path.glob()).
+        base_path (Path):
+            Base path to be used for setting up the carrier capture
+            calculations. Should be the base directory for `pydefect`
+            subdirectories and contain the defect and carrier_capture
+            subdirectories. Defaults to Path.cwd().
+        potcar (Potcar or None):
+            `pymatgen` Potcar object. Defaults to None (leave POTCAR
+            alone).
+        kpt (Kpoints or None):
+            `pymatgen` Kpoints object. Defaults to None (leave KPOINTS
+            alone).
+        incar_settings (dict or None):
+            Dictionary of INCAR settings to to use for the single-energy
+            displacement calculations. Defaults to None (leave INCAR
+            alone).
+
+    Returns
+    ---------
+        Path object of the directory containing the displacement
+        calculations.
+    """
+    defect_path = base_path / 'defect'
+    capture_path = base_path / 'carrier_capture'
+    defect_initial_path = defect_path / '_'.join([defect_name, str(q_initial)])
+    defect_final_path = defect_path / '_'.join([defect_name, str(q_final)])
+    capture_calc_path = capture_path / '_'.join([defect_name, str(q_initial), str(q_final)])
+
+    charge_diff = q_final - q_initial
+    capture_initial_path = capture_calc_path / 'i_q'
+    capture_final_path = capture_calc_path / f'f_q{charge_diff:+}'
+
+    # get a list of paths based upon charge_key and displacement specifications
+    adjust_paths = []
+    if charge_key.lower()[0] == 'b':
+        if displacements is not None:
+            for m in range(displacements.shape[0]):
+                disp_m = f'{str(displacements[m]).replace('.', ''):0>3}'
+                adjust_paths.append(capture_initial_path / f'{cc_stage}_{disp_m}/')
+                adjust_paths.append(capture_final_path / f'{cc_stage}_{disp_m}/')
+        else:
+            for j in capture_initial_path.glob(f'{cc_stage}_*/'):
+                adjust_paths.append(j)
+            for k in capture_final_path.glob(f'{cc_stage}_*/'):
+                adjust_paths.append(k)
+    elif charge_key.lower()[0] == 'i':
+        if displacements is not None:
+            for m in range(displacements.shape[0]):
+                disp_m = f'{str(displacements[m]).replace('.', ''):0>3}'
+                adjust_paths.append(capture_initial_path / f'{cc_stage}_{disp_m}/')
+        else:
+            for j in capture_initial_path.glob(f'{cc_stage}_*/'):
+                adjust_paths.append(j)
+    elif charge_key.lower()[0] == 'f':
+        if displacements is not None:
+            for m in range(displacements.shape[0]):
+                disp_m = f'{str(displacements[m]).replace('.', ''):0>3}'
+                adjust_paths.append(capture_final_path / f'{cc_stage}_{disp_m}/')
+        else:
+            for k in capture_final_path.glob(f'{cc_stage}_*/'):
+                adjust_paths.append(k)
+    else:
+        print('Please use a valid charge_key (b/i/f)')
+
+    # use list of paths to perform adjustment
+    for i in adjust_paths:
+        # adjust POTCAR?
+        if potcar is not None:
+            potcar.write_file(i / 'POTCAR')
+    
+        # adjust KPOINTS?
+        if kpt is not None:
+            kpt.write_file(i / 'KPOINTS')
+    
+        # adjust INCAR?
+        if incar_settings is not None:
+            incar_dict = Incar.from_file(i / 'INCAR')
+            incar_dict.update(incar_settings)
+            incar = Incar(incar_dict)
+            incar.write_file(i / 'INCAR')
+
+    return adjust_paths
+
+
 def gather_qe_data(
     excited_poscar_path: PathLike,
     ground_poscar_path: PathLike,
