@@ -979,6 +979,7 @@ def parse_carrier_capture_info(
     dielectric_const: float = 10.,
     kpt_idx: int = 0,
     spin: int = 0,
+    band_degen_tol: float = 0.2,
     base_path: Path = Path.cwd(),
     displacements: ArrayLike = np.array([
         -0.2, -0.1, 0., 0.1, 0.2
@@ -1022,6 +1023,11 @@ def parse_carrier_capture_info(
         spin (int):
             Spin channel used for electron-phonon coupling matrix
             element calculation. Defaults to 0 (spin-up).
+        band_degen_tol (float):
+            Energy difference (in eV) between bands to be considered
+            degenerate for the valence/conduction bands used for
+            electron-phonon coupling matrix element calculation.
+            Defaults to 0.2.
         base_path (Path):
             Base path to be used for setting up the carrier capture
             calculations. Should be the base directory for `pydefect`
@@ -1121,13 +1127,13 @@ def parse_carrier_capture_info(
             if isclose(
                 eig_occ_up[:, 0][vbm_bandidx_up[0][0]],
                 eig_occ_up[:, 0][band_idx],
-                abs_tol=0.2
+                abs_tol=band_degen_tol
             ):
                 valence_indices.append(band_idx)
             elif isclose(
                 eig_occ_down[:, 0][vbm_bandidx_down[0][0]],
                 eig_occ_down[:, 0][band_idx],
-                abs_tol=0.2
+                abs_tol=band_degen_tol
             ):
                 valence_indices.append(band_idx)
     valence_indices.sort()
@@ -1140,13 +1146,13 @@ def parse_carrier_capture_info(
             if isclose(
                 eig_occ_up[:, 0][cbm_bandidx_up[0][0]],
                 eig_occ_up[:, 0][band_idx],
-                abs_tol=0.2
+                abs_tol=band_degen_tol
             ):
                 conduction_indices.append(band_idx)
             elif isclose(
                 eig_occ_down[:, 0][cbm_bandidx_down[0][0]],
                 eig_occ_down[:, 0][band_idx],
-                abs_tol=0.2
+                abs_tol=band_degen_tol
             ):
                 conduction_indices.append(band_idx)
     conduction_indices.sort()
