@@ -1100,6 +1100,7 @@ def parse_carrier_capture_info(
     dielectric_const: float = 10.,
     kpt_idx: int = 0,
     spin: int = 0,
+    band_idx_dict: dict | None = None,
     band_degen_tol: float = 0.2,
     base_path: Path = Path.cwd(),
     displacements: ArrayLike = np.array([
@@ -1144,6 +1145,12 @@ def parse_carrier_capture_info(
         spin (int):
             Spin channel used for electron-phonon coupling matrix
             element calculation. Defaults to 0 (spin-up).
+        band_idx_dict (dict):
+            Dictionary containing the VBM/CBM/defect band indices for
+            calculating the electron-phonon coupling matrix elements.
+            Keys must be 'vbm_idx', 'cbm_idx', and 'def_idx'. Values must
+            be lists of one or more integers. Defaults to None (auto-
+            determined indices).
         band_degen_tol (float):
             Energy difference (in eV) between bands to be considered
             degenerate for the valence/conduction bands used for
@@ -1236,47 +1243,55 @@ def parse_carrier_capture_info(
     else:
         cc_dict.update({'Eg': float(band_props[0][0])})
     valence_indices, conduction_indices, defect_indices = [], [], []
-    # eigenvalues are dict of {(spin): NDArray(shape=(nkpt, nbands, 2))},
-    # kpoint index is 0-based
-    eig_occ_up = perfect_eigenvals.eigenvalues[Spin.up][kpt_idx]
-    eig_occ_down = perfect_eigenvals.eigenvalues[Spin.down][kpt_idx]
-    vbm_bandidx_up = np.where(np.isclose(eig_occ_up[:, 0], band_props[2][0], atol=0.0001))
-    vbm_bandidx_down = np.where(np.isclose(eig_occ_down[:, 0], band_props[2][1], atol=0.0001))
-    if isclose(vbm_bandidx_up[0][0], vbm_bandidx_down[0][0], abs_tol=0.1):
-        valence_indices.append(vbm_bandidx_up[0][0])
-        for band_idx in range(vbm_bandidx_up[0][0]):
-            if isclose(
-                eig_occ_up[:, 0][vbm_bandidx_up[0][0]],
-                eig_occ_up[:, 0][band_idx],
-                abs_tol=band_degen_tol
-            ):
-                valence_indices.append(band_idx)
-            elif isclose(
-                eig_occ_down[:, 0][vbm_bandidx_down[0][0]],
-                eig_occ_down[:, 0][band_idx],
-                abs_tol=band_degen_tol
-            ):
-                valence_indices.append(band_idx)
-    valence_indices.sort()
-
-    cbm_bandidx_up = np.where(np.isclose(eig_occ_up[:, 0], band_props[1][0], atol=0.0001))
-    cbm_bandidx_down = np.where(np.isclose(eig_occ_down[:, 0], band_props[1][1], atol=0.0001))
-    if isclose(cbm_bandidx_up[0][0], cbm_bandidx_down[0][0], abs_tol=0.1):
-        conduction_indices.append(cbm_bandidx_up[0][0])
-        for band_idx in range(cbm_bandidx_up[0][0]):
-            if isclose(
-                eig_occ_up[:, 0][cbm_bandidx_up[0][0]],
-                eig_occ_up[:, 0][band_idx],
-                abs_tol=band_degen_tol
-            ):
-                conduction_indices.append(band_idx)
-            elif isclose(
-                eig_occ_down[:, 0][cbm_bandidx_down[0][0]],
-                eig_occ_down[:, 0][band_idx],
-                abs_tol=band_degen_tol
-            ):
-                conduction_indices.append(band_idx)
-    conduction_indices.sort()
+    if band_idx_dict is None:
+        # eigenvalues are dict of {(spin): NDArray(shape=(nkpt, nbands, 2))},
+        # kpoint index is 0-based
+        eig_occ_up = perfect_eigenvals.eigenvalues[Spin.up][kpt_idx]
+        eig_occ_down = perfect_eigenvals.eigenvalues[Spin.down][kpt_idx]
+        vbm_bandidx_up = np.where(np.isclose(eig_occ_up[:, 0], band_props[2][0], atol=0.0001))
+        vbm_bandidx_down = np.where(np.isclose(eig_occ_down[:, 0], band_props[2][1], atol=0.0001))
+        if isclose(vbm_bandidx_up[0][0], vbm_bandidx_down[0][0], abs_tol=0.1):
+            valence_indices.append(vbm_bandidx_up[0][0])
+            for band_idx in range(vbm_bandidx_up[0][0]):
+                if isclose(
+                    eig_occ_up[:, 0][vbm_bandidx_up[0][0]],
+                    eig_occ_up[:, 0][band_idx],
+                    abs_tol=band_degen_tol
+                ):
+                    valence_indices.append(band_idx)
+                elif isclose(
+                    eig_occ_down[:, 0][vbm_bandidx_down[0][0]],
+                    eig_occ_down[:, 0][band_idx],
+                    abs_tol=band_degen_tol
+                ):
+                    valence_indices.append(band_idx)
+        valence_indices.sort()
+    
+        cbm_bandidx_up = np.where(np.isclose(eig_occ_up[:, 0], band_props[1][0], atol=0.0001))
+        cbm_bandidx_down = np.where(np.isclose(eig_occ_down[:, 0], band_props[1][1], atol=0.0001))
+        if isclose(cbm_bandidx_up[0][0], cbm_bandidx_down[0][0], abs_tol=0.1):
+            conduction_indices.append(cbm_bandidx_up[0][0])
+            for band_idx in range(cbm_bandidx_up[0][0]):
+                if isclose(
+                    eig_occ_up[:, 0][cbm_bandidx_up[0][0]],
+                    eig_occ_up[:, 0][band_idx],
+                    abs_tol=band_degen_tol
+                ):
+                    conduction_indices.append(band_idx)
+                elif isclose(
+                    eig_occ_down[:, 0][cbm_bandidx_down[0][0]],
+                    eig_occ_down[:, 0][band_idx],
+                    abs_tol=band_degen_tol
+                ):
+                    conduction_indices.append(band_idx)
+        conduction_indices.sort()
+    elif 'vbm_idx' in band_idx_dict and 'cbm_idx' in band_idx_dict:
+        valence_indices = band_idx_dict['vbm_idx']
+        valence_indices.sort()
+        conduction_indices = band_idx_dict['cbm_idx']
+        conduction_indices.sort()
+    else:
+        raise KeyError('Band indices dictionary specified but does not contain both vbm_idx/cbm_idx keys.')
     
     # determine dQ from relaxed defect calculation structures
     poscar_initial = Poscar.from_file(defect_initial_path / 'CONTCAR')
@@ -1304,29 +1319,53 @@ def parse_carrier_capture_info(
     coupling_state_keystr = coupling_state.lower()[0]
     # check if coupling state is final or ground
     if coupling_state_keystr == 'f' or coupling_state_keystr == 'g':
-        # path to initial vasprun
-        ground_vr_path = capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'vasprun.xml'
-        # adjust valence/conduction band indices by electron difference
-        # from perfect reference to coupling reference
+        # path to final ref vasprun
+        wav_Q0 = f'WAV_{str(Q0).replace('.', ''):0>3}'
+        ground_vr_path = capture_final_path / wav_Q0 / 'vasprun.xml'
+
+        # eigenvalues from file
         defect_eigenvals = Eigenval(
-            capture_final_path / f'WAV_{str(Q0).replace('.', ''):0>3}' / 'EIGENVAL',
+            capture_final_path / wav_Q0 / 'EIGENVAL',
             separate_spins=True
         )
+
+        # electron difference from perfect reference to coupling reference
         nelect_diff = perfect_eigenvals.nelect - defect_eigenvals.nelect
-        valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
-        conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
+
+        if band_idx_dict is None:
+            # adjust valence/conduction band indices by electron difference
+            valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
+            conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
+
+            gap_idx_above_vbm = int(max(valence_indices)+1)
+            gap_idx_below_cbm = int(min(conduction_indices)-1)
+            
+            # add band indices for defects considered in electron-phonon
+            # coupling matrix element calculations
+            defect_indices.append(gap_idx_above_vbm)
+            if gap_idx_below_cbm not in defect_indices:
+                defect_indices.append(gap_idx_below_cbm)
+            defect_indices.sort()
+        elif 'def_idx' in band_idx_dict:
+            defect_indices = band_idx_dict['def_idx']
+            defect_indices.sort()
+        else:
+            raise KeyError('Band indices dictionary specified but does not contain def_idx key.')
+
+        # get list of tuples for Q coord vals & WSWQ filepaths
         for d in capture_final_path.glob('WSWQ_*'):
             if str(d) in [f'{str(capture_final_path)}/WSWQ_{str(i).replace('.', ''):0>3}' \
                           for i in displacements]:
                 Q_struc = Structure.from_file(d / 'CONTCAR')
                 Q = get_Q_from_struct(f_struc, i_struc, Q_struc)
                 f_WSWQs.append((Q, d / 'WSWQ'))
+        
         # wavefunction indexing for get_Wif_from_WSWQ is 1-based
         # indexing, spin (0 - up, 1 - down), & kpoint defaults to first
         f_Wifs_vbm = get_Wif_from_WSWQ(
             f_WSWQs,
             str(ground_vr_path),
-            int(max(valence_indices)+1),
+            min(defect_indices),
             valence_indices,
             spin=spin,
             kpoint=kpt_idx+1,
@@ -1335,7 +1374,7 @@ def parse_carrier_capture_info(
         f_Wifs_cbm = get_Wif_from_WSWQ(
             f_WSWQs,
             str(ground_vr_path),
-            int(min(conduction_indices)-1),
+            max(defect_indices),
             conduction_indices,
             spin=spin,
             kpoint=kpt_idx+1,
@@ -1346,30 +1385,53 @@ def parse_carrier_capture_info(
     
     # check if coupling state is initial or excited
     elif coupling_state_keystr == 'i' or coupling_state_keystr == 'e':
-        # path to initial vasprun
+        # path to initial ref vasprun
         wav_Q0 = f'WAV_{str(Q0).replace('.', ''):0>3}'
         ground_vr_path = capture_initial_path / wav_Q0 / 'vasprun.xml'
-        # adjust valence/conduction band indices by electron difference
-        # from perfect reference to coupling reference
+
+        # eigenvalues from file
         defect_eigenvals = Eigenval(
-            capture_final_path / wav_Q0 / 'EIGENVAL',
+            capture_initial_path / wav_Q0 / 'EIGENVAL',
             separate_spins=True
         )
+        
+        # electron difference from perfect reference to coupling reference
         nelect_diff = perfect_eigenvals.nelect - defect_eigenvals.nelect
-        valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
-        conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
+
+        if band_idx_dict is None:
+            # adjust valence/conduction band indices by electron difference
+            valence_indices = [i - floor(nelect_diff/2) for i in valence_indices]
+            conduction_indices = [i - floor(nelect_diff/2) + 1 for i in conduction_indices]
+
+            gap_idx_above_vbm = int(max(valence_indices)+1)
+            gap_idx_below_cbm = int(min(conduction_indices)-1)
+            
+            # add band indices for defects considered in electron-phonon
+            # coupling matrix element calculations
+            defect_indices.append(gap_idx_above_vbm)
+            if gap_idx_below_cbm not in defect_indices:
+                defect_indices.append(gap_idx_below_cbm)
+            defect_indices.sort()
+        elif 'def_idx' in band_idx_dict:
+            defect_indices = band_idx_dict['def_idx']
+            defect_indices.sort()
+        else:
+            raise KeyError('Band indices dictionary specified but does not contain def_idx key.')
+
+        # get list of tuples for Q coord vals & WSWQ filepaths
         for d in capture_initial_path.glob('WSWQ_*'):
             if str(d) in [f'{str(capture_initial_path)}/WSWQ_{str(i).replace('.', ''):0>3}' \
                           for i in displacements]:
                 Q_struc = Structure.from_file(d / 'CONTCAR')
                 Q = get_Q_from_struct(f_struc, i_struc, Q_struc)
                 i_WSWQs.append((Q, d / 'WSWQ'))
+        
         # wavefunction indexing for get_Wif_from_WSWQ is 1-based
         # indexing, spin (0 - up, 1 - down), & kpoint defaults to first
         i_Wifs_vbm = get_Wif_from_WSWQ(
             i_WSWQs,
             str(ground_vr_path),
-            int(max(valence_indices)+1),
+            min(defect_indices),
             valence_indices,
             spin=spin,
             kpoint=kpt_idx+1,
@@ -1378,7 +1440,7 @@ def parse_carrier_capture_info(
         i_Wifs_cbm = get_Wif_from_WSWQ(
             i_WSWQs,
             str(ground_vr_path),
-            int(min(conduction_indices)-1),
+            max(defect_indices),
             conduction_indices,
             spin=spin,
             kpoint=kpt_idx+1,
@@ -1391,13 +1453,6 @@ def parse_carrier_capture_info(
             'Please choose either the final/initial state for use in ' +
             'calculating the electron-phonon coupling matrix element.'
         )
-
-    # add band indices for defects considered in electron-phonon
-    # coupling matrix element calculations
-    defect_indices.append(int(max(valence_indices)+1))
-    if int(min(conduction_indices)-1) not in defect_indices:
-        defect_indices.append(int(min(conduction_indices)-1))
-    defect_indices.sort()
     
     Wif_vbm_dec, Wif_vbm_exp = f'{Wif_vbm:.2E}'.split('E')
     Wif_cbm_dec, Wif_cbm_exp = f'{Wif_cbm:.2E}'.split('E')
