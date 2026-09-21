@@ -343,9 +343,69 @@ def combine_figures(
     return combined_pdf
 
 
-def combine_ccd_cap_coeff_figs(defect_name, q_initial, q_final, suffix='', cc_path=Path.cwd(), layout='h', font_size=26):
+def combine_ccd_cap_coeff_figs(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    suffix: str = '',
+    cc_path: Path = Path.cwd(),
+    ccd_filename: PathLike = 'config-coord-dia.pdf',
+    cap_coeff_filename: PathLike = 'scaled_cap_coeff.pdf',
+    comb_fig_suffix: str = '',
+    layout: str = 'horizontal',
+    font_size: int = 26,
+    sub_list: list = alc,
+    annot_offset_x: int = 10,
+    annot_offset_y: int = 100,
+    use_xobject: bool = False
+) -> None:
     """
-    Combine CCD and scaled capture coefficient figures for a carrier capture calculation.
+    Combine CCD and scaled capture coefficient figures for a carrier
+    capture calculation.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        suffix (str):
+            Suffix attached to the defect name + charges string (e.g.,
+            'sxda' -> 'Va_N1_2_1_sxda'). Defaults to no suffix ('').
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        ccd_filename (PathLike):
+            Filename (including extension) of the configuration
+            coordinate diagram plot.
+        cap_coeff_filename (PathLike):
+            Filename (including extension) of the capture coefficient
+            plot.
+        comb_fig_suffix (str):
+            Suffix to be attached to the combined figure being output.
+            Defaults to no suffix ('').
+        layout (str):
+            Layout for combining figures ('horizontal' or 'vertical').
+            Defaults to 'horizontal'.
+        font_size (int):
+            Font size for subfigure annotations. Defaults to 26.
+        sub_list (list):
+            List of labels for subfigure annotations. Defaults to
+            lowercase letters (ascii_lowercase: a, b, c, ...).
+        annot_offset_x (int):
+            Offset in x-direction for subfigure annotation. Defaults
+            to 10.
+        annot_offset_y (int):
+            Offset in y-direction for subfigure annotation. Defaults
+            to 100.
+        use_xobject (bool):
+            Whether to use xobjects for combining figures. May be useful
+            in case of errors during figure merge. Defaults to False.
+
+    Returns
+    ---------
+        Nothing.
     """
     defect_name_charges = '_'.join([defect_name, str(q_initial), str(q_final)])
     if suffix != '':
@@ -353,25 +413,77 @@ def combine_ccd_cap_coeff_figs(defect_name, q_initial, q_final, suffix='', cc_pa
     capture_calc_path = cc_path / defect_name_charges
 
     # CCD and capture coefficient figures
-    ccd_path, cap_coeff_path = capture_calc_path / 'config-coord-dia.pdf', capture_calc_path / 'scaled_cap_coeff.pdf'
+    ccd_path = capture_calc_path / ccd_filename
+    cap_coeff_path = capture_calc_path / cap_coeff_filename
 
     # combine figures horizontally
     combine_figures(
         [ccd_path, cap_coeff_path],
-        capture_calc_path / f'{defect_name_charges.lower()}.pdf',
+        capture_calc_path / f'{defect_name_charges.lower()}{comb_fig_suffix}.pdf',
         layout=layout,
-        font_size=font_size
+        font_size=font_size,
+        sub_list=sub_list,
+        annot_offset_x=annot_offset_x,
+        annot_offset_y=annot_offset_y,
+        use_xobject=use_xobject
     )
     
     return None
 
 
-def combine_all_ccd_cap_coeff_figs(cc_path=Path.cwd(), layout='h', font_size=26):
+def combine_all_ccd_cap_coeff_figs(
+    cc_path: Path = Path.cwd(),
+    ccd_filename: PathLike = 'config-coord-dia.pdf',
+    cap_coeff_filename: PathLike = 'scaled_cap_coeff.pdf',
+    comb_fig_suffix: str = '',
+    layout: str = 'horizontal',
+    font_size: int = 26,
+    sub_list: list = alc,
+    annot_offset_x: int = 10,
+    annot_offset_y: int = 100,
+    use_xobject: bool = False
+) -> None:
     """
-    Combine CCD and scaled capture coefficient figures for all carrier capture calculation.
+    Combine CCD and scaled capture coefficient figures for all carrier
+    capture calculation.
+    
+    Args
+    ---------
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        ccd_filename (PathLike):
+            Filename (including extension) of the configuration
+            coordinate diagram plots in each defect calculation.
+        cap_coeff_filename (PathLike):
+            Filename (including extension) of the capture coefficient
+            plots in each defect calculation.
+        comb_fig_suffix (str):
+            Suffix to be attached to the combined figure being output.
+            Defaults to no suffix ('').
+        layout (str):
+            Layout for combining figures ('horizontal' or 'vertical').
+            Defaults to 'horizontal'.
+        font_size (int):
+            Font size for subfigure annotations. Defaults to 26.
+        sub_list (list):
+            List of labels for subfigure annotations. Defaults to
+            lowercase letters (ascii_lowercase: a, b, c, ...).
+        annot_offset_x (int):
+            Offset in x-direction for subfigure annotation. Defaults
+            to 10.
+        annot_offset_y (int):
+            Offset in y-direction for subfigure annotation. Defaults
+            to 100.
+        use_xobject (bool):
+            Whether to use xobjects for combining figures. May be useful
+            in case of errors during figure merge. Defaults to False.
+
+    Returns
+    ---------
+        Nothing.
     """
-    ccd_paths = list(cc_path.glob('*/config-coord-dia.pdf'))
-    cap_coeff_paths = list(cc_path.glob('*/scaled_cap_coeff.pdf'))
+    ccd_paths = list(cc_path.glob(f'*/{ccd_filename}'))
+    cap_coeff_paths = list(cc_path.glob(f'*/{cap_coeff_filename}'))
     for i in range(len(ccd_paths)):
         defect_name_charges = ccd_paths[i].parent.name
         if defect_name_charges != cap_coeff_paths[i].parent.name:
@@ -392,16 +504,83 @@ def combine_all_ccd_cap_coeff_figs(cc_path=Path.cwd(), layout='h', font_size=26)
             q_f,
             suffix=suffix,
             cc_path=cc_path,
+            ccd_filename=ccd_filename,
+            cap_coeff_filename=cap_coeff_filename,
+            comb_fig_suffix=comb_fig_suffix,
             layout=layout,
-            font_size=font_size
+            font_size=font_size,
+            sub_list=sub_list,
+            annot_offset_x=annot_offset_x,
+            annot_offset_y=annot_offset_y,
+            use_xobject=use_xobject
         )
     
     return None
 
 
-def combine_hole_ele_eff_barrier_figs(defect_name, q_initial, q_final, suffix='', cc_path=Path.cwd(), layout='h', font_size=26):
+def combine_hole_ele_eff_barrier_figs(
+    defect_name: str,
+    q_initial: int,
+    q_final: int,
+    suffix: str = '',
+    cc_path: Path = Path.cwd(),
+    hole_effb_filename: PathLike = 'fit_hole_cap_coeff_eff_barrier.pdf',
+    ele_effb_filename: PathLike = 'fit_ele_cap_coeff_eff_barrier.pdf',
+    comb_fig_suffix: str = '_eff_barriers',
+    layout: str = 'horizontal',
+    font_size: int = 26,
+    sub_list: list = alc,
+    annot_offset_x: int = 10,
+    annot_offset_y: int = 100,
+    use_xobject: bool = False
+) -> None:
     """
-    Combine effective hole and electron capture fit figures for a carrier capture calculation.
+    Combine effective hole and electron capture fit figures for a
+    carrier capture calculation.
+    
+    Args
+    ---------
+        defect_name (str):
+            Name of defect in defect_site# format (e.g., Va_N1).
+        q_initial (int):
+            Initial charge state of defect.
+        q_final (int):
+            Final charge state of defect.
+        suffix (str):
+            Suffix attached to the defect name + charges string (e.g.,
+            'sxda' -> 'Va_N1_2_1_sxda'). Defaults to no suffix ('').
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        hole_effb_filename (PathLike):
+            Filename (including extension) of the hole capture effective
+            barrier fitting plot.
+        ele_effb_filename (PathLike):
+            Filename (including extension) of the electron capture
+            effective barrier fitting plot.
+        comb_fig_suffix (str):
+            Suffix to be attached to the combined figure being output.
+            Defaults to no suffix ('').
+        layout (str):
+            Layout for combining figures ('horizontal' or 'vertical').
+            Defaults to 'horizontal'.
+        font_size (int):
+            Font size for subfigure annotations. Defaults to 26.
+        sub_list (list):
+            List of labels for subfigure annotations. Defaults to
+            lowercase letters (ascii_lowercase: a, b, c, ...).
+        annot_offset_x (int):
+            Offset in x-direction for subfigure annotation. Defaults
+            to 10.
+        annot_offset_y (int):
+            Offset in y-direction for subfigure annotation. Defaults
+            to 100.
+        use_xobject (bool):
+            Whether to use xobjects for combining figures. May be useful
+            in case of errors during figure merge. Defaults to False.
+
+    Returns
+    ---------
+        Nothing.
     """
     defect_name_charges = '_'.join([defect_name, str(q_initial), str(q_final)])
     if suffix != '':
@@ -409,26 +588,77 @@ def combine_hole_ele_eff_barrier_figs(defect_name, q_initial, q_final, suffix=''
     capture_calc_path = cc_path / defect_name_charges
 
     # hole and electron coefficient figures
-    hole_barrier_path = capture_calc_path / 'fit_hole_cap_coeff_eff_barrier.pdf'
-    ele_barrier_path = capture_calc_path / 'fit_ele_cap_coeff_eff_barrier.pdf'
+    hole_barrier_path = capture_calc_path / hole_effb_filename
+    ele_barrier_path = capture_calc_path / ele_effb_filename
 
     # combine figures horizontally
     combine_figures(
         [hole_barrier_path, ele_barrier_path],
-        capture_calc_path / f'{defect_name_charges.lower()}_eff_barriers.pdf',
+        capture_calc_path / f'{defect_name_charges.lower()}{comb_fig_suffix}.pdf',
         layout=layout,
-        font_size=font_size
+        font_size=font_size,
+        sub_list=sub_list,
+        annot_offset_x=annot_offset_x,
+        annot_offset_y=annot_offset_y,
+        use_xobject=use_xobject
     )
     
     return None
 
     
-def combine_all_eff_barrier_figs(cc_path=Path.cwd(), layout='h', font_size=26):
+def combine_all_eff_barrier_figs(
+    cc_path: Path = Path.cwd(),
+    hole_effb_filename: PathLike = 'fit_hole_cap_coeff_eff_barrier.pdf',
+    ele_effb_filename: PathLike = 'fit_ele_cap_coeff_eff_barrier.pdf',
+    comb_fig_suffix: str = '_eff_barriers',
+    layout: str = 'horizontal',
+    font_size: int = 26,
+    sub_list: list = alc,
+    annot_offset_x: int = 10,
+    annot_offset_y: int = 100,
+    use_xobject: bool = False
+) -> None:
     """
-    Combine effective hole and electron capture fit figures for all carrier capture calculations.
+    Combine effective hole and electron capture fit figures for all
+    carrier capture calculations.
+    
+    Args
+    ---------
+        cc_path (Path):
+            Path to carrier_capture subdirectory. Defaults to Path.cwd().
+        hole_effb_filename (PathLike):
+            Filename (including extension) of the hole capture effective
+            barrier fitting plots in each defect calculation.
+        ele_effb_filename (PathLike):
+            Filename (including extension) of the electron capture
+            effective barrier fitting plots in each defect calculation.
+        comb_fig_suffix (str):
+            Suffix to be attached to the combined figure being output.
+            Defaults to no suffix ('').
+        layout (str):
+            Layout for combining figures ('horizontal' or 'vertical').
+            Defaults to 'horizontal'.
+        font_size (int):
+            Font size for subfigure annotations. Defaults to 26.
+        sub_list (list):
+            List of labels for subfigure annotations. Defaults to
+            lowercase letters (ascii_lowercase: a, b, c, ...).
+        annot_offset_x (int):
+            Offset in x-direction for subfigure annotation. Defaults
+            to 10.
+        annot_offset_y (int):
+            Offset in y-direction for subfigure annotation. Defaults
+            to 100.
+        use_xobject (bool):
+            Whether to use xobjects for combining figures. May be useful
+            in case of errors during figure merge. Defaults to False.
+
+    Returns
+    ---------
+        Nothing.
     """
-    hole_barrier_paths = list(cc_path.glob('*/fit_hole_cap_coeff_eff_barrier.pdf'))
-    ele_barrier_paths = list(cc_path.glob('*/fit_ele_cap_coeff_eff_barrier.pdf'))
+    hole_barrier_paths = list(cc_path.glob(f'*/{hole_effb_filename}'))
+    ele_barrier_paths = list(cc_path.glob(f'*/{ele_effb_filename}'))
     for i in range(len(hole_barrier_paths)):
         defect_name_charges = hole_barrier_paths[i].parent.name
         if defect_name_charges != ele_barrier_paths[i].parent.name:
@@ -449,8 +679,15 @@ def combine_all_eff_barrier_figs(cc_path=Path.cwd(), layout='h', font_size=26):
             q_f,
             suffix=suffix,
             cc_path=cc_path,
+            hole_effb_filename=hole_effb_filename,
+            ele_effb_filename=ele_effb_filename,
+            comb_fig_suffix=comb_fig_suffix,
             layout=layout,
-            font_size=font_size
+            font_size=font_size,
+            sub_list=sub_list,
+            annot_offset_x=annot_offset_x,
+            annot_offset_y=annot_offset_y,
+            use_xobject=use_xobject
         )
     
     return None
