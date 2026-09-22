@@ -22,7 +22,7 @@ dependencies = [
     "matplotlib",
     "plotly",
     "pypdf",
-    "fpdf",
+    "fpdf2",
     "pymupdf",
     "pymatgen",
     "mp-api",
