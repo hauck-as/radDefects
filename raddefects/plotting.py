@@ -756,8 +756,11 @@ def plot_plnr_avg_abc(plot_data, title=None, ax=None, style_file=None):
 def generate_transition_level_diagram(
     transition_levels: TransitionLevels,
     skip_defects: list = [],
+    remove_defect_nums: bool = False,
     charge_style: str = 'mid',
     q_prox_tol: float | int = 0.05,
+    vb_height: float | int = 0.2,
+    cb_height: float | int = 0.25,
     fig_name: PathLike | None = 'transition_levels.pdf'
 ) -> go.Figure():
     """
@@ -771,12 +774,21 @@ def generate_transition_level_diagram(
         skip_defects (list):
             List of defect names to skip from the transition_levels file. Defaults
             to an empty list.
+        remove_defect_nums (bool):
+            Whether or not to remove the numbers from the defect site
+            specifications in their names. Defaults to False (keep numbers).
         charge_style (str):
             String representing style for how to print the charge states. Defaults
             to 'mid', the midpoint between the nearest CTLs.
         q_prox_tol (float or int):
             Tolerance value for two CTLs or CTLs and band edges, below which
             the charge annotation is not printed. Defaults to 0.05 eV.
+        vb_height (float or int):
+            Height of the red rectangle representing the valence band in the
+            plot. Defaults to 0.2 eV.
+        cb_height (float or int):
+            Height of the blue rectangle representing the conduction band in
+            the plot. Defaults to 0.25 eV.
         fig_name (PathLike or None):
             Name for figure to save or None to not save a figure. Defaults to
             'transition_levels.pdf'.
@@ -792,8 +804,11 @@ def generate_transition_level_diagram(
     defects_list = [defect.name for defect in transition_levels.transition_levels]
 
     # format defect names for plotting
-    formatted_defects = list(map(lambda s: re.sub(r'\d+', '', s), defects_list))  # remove subscript numbers
-    formatted_defects = list(map(lambda s: re.sub('Va', 'V', s), formatted_defects))  # vacancy Va->V
+    if remove_defect_nums:
+        formatted_defects = list(map(lambda s: re.sub(r'\d+', '', s), defects_list))  # remove subscript numbers
+        formatted_defects = list(map(lambda s: re.sub('Va', 'V', s), formatted_defects))  # vacancy Va->V
+    else:
+        formatted_defects = list(map(lambda s: re.sub('Va', 'V', s), defects_list))  # vacancy Va->V
     for m, defect_m in enumerate(formatted_defects):
         if '–' in defect_m:  # check for defect complex with en dashes
             c_split = defect_m.split('–')
@@ -896,12 +911,34 @@ def generate_transition_level_diagram(
     fig.update_traces(textposition='top center')
 
     # VBM
-    fig.add_hline(y=0., line=dict(color='black', width=3, dash='dash'), annotation_text='VBM', annotation_position='bottom left')
-    fig.add_hrect(y0=-0.2, y1=0., line_width=0, fillcolor='red', opacity=0.2)
+    fig.add_hline(
+        y=0.,
+        line=dict(color='black', width=3, dash='dash'),
+        annotation_text='VBM',
+        annotation_position='bottom left'
+    )
+    fig.add_hrect(
+        y0=-1*vb_height,
+        y1=0.,
+        line_width=0,
+        fillcolor='red',
+        opacity=0.2
+    )
     
     # CBM
-    fig.add_hline(y=transition_levels.cbm, line=dict(color='black', width=3, dash='dash'), annotation_text='CBM', annotation_position='top left')
-    fig.add_hrect(y0=transition_levels.cbm, y1=transition_levels.cbm+0.25, line_width=0, fillcolor='blue', opacity=0.2)
+    fig.add_hline(
+        y=transition_levels.cbm,
+        line=dict(color='black', width=3, dash='dash'),
+        annotation_text='CBM',
+        annotation_position='top left'
+    )
+    fig.add_hrect(
+        y0=transition_levels.cbm,
+        y1=transition_levels.cbm+cb_height,
+        line_width=0,
+        fillcolor='blue',
+        opacity=0.2
+    )
 
     fig.update_layout(
         xaxis=dict(
@@ -931,9 +968,12 @@ def generate_carrier_capture_ctl(
     transition_levels: TransitionLevels,
     coeffs_df: pd.DataFrame,
     skip_defects: list = [],
+    remove_defect_nums: bool = False,
     charge_style: str = 'mid',
     coeff_namelist: list = ['C_p', 'C_n'],
     q_prox_tol: float | int = 0.05,
+    vb_height: float | int = 0.2,
+    cb_height: float | int = 0.25,
     cscale: list = px.colors.sequential.Plasma[:-1]+px.colors.sequential.Aggrnyl_r[1:-1],
     fig_name: PathLike | None = 'capture_coeff_ctls.pdf'
 ) -> go.Figure():
@@ -950,6 +990,9 @@ def generate_carrier_capture_ctl(
         skip_defects (list):
             List of defect names to skip from the transition_levels file. Defaults
             to an empty list.
+        remove_defect_nums (bool):
+            Whether or not to remove the numbers from the defect site
+            specifications in their names. Defaults to False (keep numbers).
         charge_style (str):
             String representing style for how to print the charge states. Defaults
             to 'mid', the midpoint between the nearest CTLs.
@@ -959,6 +1002,12 @@ def generate_carrier_capture_ctl(
         q_prox_tol (float or int):
             Tolerance value for two CTLs or CTLs and band edges, below which
             the charge annotation is not printed. Defaults to 0.05 eV.
+        vb_height (float or int):
+            Height of the red rectangle representing the valence band in the
+            plot. Defaults to 0.2 eV.
+        cb_height (float or int):
+            Height of the blue rectangle representing the conduction band in
+            the plot. Defaults to 0.25 eV.
         cscale (list):
             Colorscale to use for heatmap. Defaults to a combination of
             px.colors.sequential.Plasma and Aggrnyl_r.
@@ -977,7 +1026,14 @@ def generate_carrier_capture_ctl(
     for i in cscale:
         cscale_edit.append(i)
     
-    ctl_fig = generate_transition_level_diagram(transition_levels, skip_defects=skip_defects, charge_style='s')
+    ctl_fig = generate_transition_level_diagram(
+        transition_levels,
+        skip_defects=skip_defects,
+        remove_defect_nums=remove_defect_nums,
+        charge_style='s',
+        vb_height=vb_height,
+        cb_height=cb_height
+    )
     data, layout = ctl_fig.data, ctl_fig.layout
     MARKER_SYMBOL, MARKER_SIZE, MARKER_LINE_WIDTH = data[0].marker.symbol, data[0].marker.size, data[0].marker.line.width
     MARKER_SYMBOL_EMPTY, MARKER_SIZE_EMPTY, MARKER_LINE_WIDTH_EMPTY = 'square-open', 12, 3
