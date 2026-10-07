@@ -4,6 +4,8 @@ radDefects
 ``radDefects`` is a framework to analyze properties of radiation-induced defects in semiconductor materials from first principles using ``VASP``.
 ``radDefects`` extends the analysis tools for single point defects from other codes including ``pydefect``, ``doped``, and ``pymatgen-analysis-defects`` to facilitate analysis of radiation-induced defect configurations such as Frenkel pairs and defect clusters.
 
+.. image:: cc_schematic.png
+
 ------------
 Installation
 ------------
